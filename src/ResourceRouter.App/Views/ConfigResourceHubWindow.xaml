@@ -1,0 +1,82 @@
+<Window x:Class="ResourceRouter.App.Views.ConfigResourceHubWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="配置资源中心"
+        Width="940"
+        Height="640"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="300" />
+            <ColumnDefinition Width="12" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Row="0" Grid.Column="0" BorderBrush="#FFD9DDE3" BorderThickness="1" CornerRadius="8" Padding="8">
+            <DockPanel>
+                <TextBox x:Name="TagFilterTextBox"
+                         DockPanel.Dock="Top"
+                         Height="30"
+                         Margin="0,0,0,8"
+                         VerticalContentAlignment="Center"
+                         TextChanged="OnTagFilterChanged"
+                         ToolTip="按 tag 过滤，例如 config / native / plugin" />
+
+                <ListBox x:Name="ResourceList"
+                         SelectionChanged="OnResourceSelectionChanged"
+                         BorderThickness="0">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Margin="0,0,0,8" Padding="8" BorderThickness="1" BorderBrush="#FFE3E7EE" CornerRadius="6" Background="#FFF9FBFD">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding TagDisplay}" Foreground="#FF5D6772" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="0" Grid.Column="2" BorderBrush="#FFD9DDE3" BorderThickness="1" CornerRadius="8" Padding="10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" Text="选择左侧配置资源" />
+                <TextBlock x:Name="TagsText" Grid.Row="1" Margin="0,6,0,10" Foreground="#FF5D6772" TextWrapping="Wrap" />
+
+                <TextBox x:Name="JsonEditor"
+                         Grid.Row="2"
+                         FontFamily="Consolas"
+                         FontSize="13"
+                         AcceptsReturn="True"
+                         AcceptsTab="True"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         TextWrapping="NoWrap" />
+
+                <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0" HorizontalAlignment="Left">
+                    <Button Width="100" Height="30" Margin="0,0,8,0" Click="OnSaveCurrentClick">保存当前</Button>
+                    <Button Width="120" Height="30" Margin="0,0,8,0" Click="OnDragJsonClick">拖出 JSON 文件</Button>
+                    <Button Width="140" Height="30" Click="OnDragBrowserEditorClick">拖出浏览器编辑页</Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Width="96" Height="32" Margin="0,0,8,0" IsCancel="True">取消</Button>
+            <Button Width="120" Height="32" IsDefault="True" Click="OnApplyClick">应用到设置</Button>
+        </StackPanel>
+    </Grid>
+</Window>

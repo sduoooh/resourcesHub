@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ResourceRouter.Core\ResourceRouter.Core.csproj" />
+    <ProjectReference Include="..\ResourceRouter.PluginSdk\ResourceRouter.PluginSdk.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Storage\Migrations\*.sql" />
+    <EmbeddedResource Include="Storage\Sql\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="DbUp" Version="5.0.41" />
+    <PackageReference Include="dbup-sqlite" Version="4.1.0" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.1.0" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+</Project>

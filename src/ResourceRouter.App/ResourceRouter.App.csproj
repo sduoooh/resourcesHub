@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ResourceRouter.Core\ResourceRouter.Core.csproj" />
+    <ProjectReference Include="..\ResourceRouter.Infrastructure\ResourceRouter.Infrastructure.csproj" />
+    <ProjectReference Include="..\ResourceRouter.PluginSdk\ResourceRouter.PluginSdk.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,91 @@
+<Window x:Class="ResourceRouter.App.Views.EdgeBarWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:ResourceRouter.App.Views"
+        Title="EdgeBar"
+        Width="10"
+        Height="200"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="True"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        ResizeMode="NoResize"
+        PreviewKeyDown="OnWindowPreviewKeyDown"
+        Background="Transparent">
+    <Grid x:Name="RootGrid"
+          Background="Transparent"
+          AllowDrop="True"
+          DragEnter="OnRootDragEnter"
+          DragOver="OnRootDragOver"
+          DragLeave="OnRootDragLeave"
+          Drop="OnRootDrop">
+        <Border x:Name="SensorStrip"
+                Width="10"
+                HorizontalAlignment="Right"
+            Background="#FF2A3440"
+            BorderBrush="#FF8DA5C0"
+                BorderThickness="1"
+                CornerRadius="5"
+                MouseLeftButtonDown="OnSensorMouseLeftButtonDown"
+                MouseMove="OnSensorMouseMove"
+                MouseLeftButtonUp="OnSensorMouseLeftButtonUp"
+                MouseRightButtonUp="OnSensorMouseRightButtonUp" />
+
+        <Popup x:Name="DropPopup"
+               Placement="Left"
+               PlacementTarget="{Binding ElementName=SensorStrip}"
+             HorizontalOffset="-10"
+               StaysOpen="True"
+               AllowsTransparency="True"
+               PopupAnimation="Fade">
+            <Border x:Name="DropPopupBorder"
+                                        AllowDrop="True"
+                                        DragEnter="OnRootDragEnter"
+                                        DragOver="OnRootDragOver"
+                                        DragLeave="OnRootDragLeave"
+                                        Drop="OnRootDrop"
+                    BorderBrush="#FF454E58"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Background="#FF141A1F"
+                    Padding="8">
+                <Border.RenderTransform>
+                    <ScaleTransform x:Name="DropPopupScale" ScaleX="0.96" ScaleY="0.96" />
+                </Border.RenderTransform>
+                <views:DropPanel x:Name="DropPanelControl" />
+            </Border>
+        </Popup>
+
+        <Popup x:Name="CardListPopup"
+               Placement="Left"
+               PlacementTarget="{Binding ElementName=SensorStrip}"
+             HorizontalOffset="-10"
+               StaysOpen="True"
+               AllowsTransparency="True"
+               PopupAnimation="Fade">
+            <Border x:Name="CardListPopupBorder"
+                                        AllowDrop="True"
+                                        DragEnter="OnRootDragEnter"
+                                        DragOver="OnRootDragOver"
+                                        DragLeave="OnRootDragLeave"
+                                        Drop="OnRootDrop"
+                    Width="430"
+                Height="320"
+                MinHeight="220"
+                MaxHeight="640"
+                    Background="#FF12171C"
+                    BorderBrush="#FF3A4450"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                <Border.RenderTransform>
+                    <ScaleTransform x:Name="CardListPopupScale" ScaleX="0.96" ScaleY="0.96" />
+                </Border.RenderTransform>
+                <DockPanel>
+                    <views:ManualInputCard x:Name="ManualInputControl" DockPanel.Dock="Top" Visibility="Collapsed" />
+                    <views:CardListPanel x:Name="CardListControl" />
+                </DockPanel>
+            </Border>
+        </Popup>
+    </Grid>
+</Window>

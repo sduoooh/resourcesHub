@@ -1,0 +1,338 @@
+<UserControl x:Class="ResourceRouter.App.Views.ResourceCard"
+             x:Name="Root"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             PreviewMouseMove="OnRootPreviewMouseMove"
+             PreviewMouseLeftButtonUp="OnRootPreviewMouseLeftButtonUp"
+             MinHeight="92"
+             HorizontalAlignment="Stretch">
+    <UserControl.Resources>
+        <Style x:Key="HoverActionSurfaceStyle" TargetType="Border">
+            <Setter Property="Background" Value="#66121A24" />
+            <Setter Property="BorderBrush" Value="#FF607995" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="Cursor" Value="SizeAll" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#CC243449" />
+                    <Setter Property="BorderBrush" Value="#FFA4C3E5" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ProcessedActionSurfaceStyle" TargetType="Border" BasedOn="{StaticResource HoverActionSurfaceStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsProcessedRouteLocked, ElementName=Root}" Value="True">
+                    <Setter Property="Background" Value="#66212A35" />
+                    <Setter Property="BorderBrush" Value="#FF4A5562" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                    <Setter Property="Opacity" Value="0.68" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DeleteActionButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="MinWidth" Value="88" />
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Background" Value="#FFB43737" />
+            <Setter Property="Foreground" Value="#FFFFF4F4" />
+            <Setter Property="BorderBrush" Value="#FFF7AAAA" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="DeleteButtonChrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="9">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="DeleteButtonChrome" Property="Background" Value="#FFC94A4A" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="DeleteButtonChrome" Property="Background" Value="#FFA13030" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="InlineComboItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#FF15202B" />
+            <Setter Property="Background" Value="#FFEAF0F5" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="MinHeight" Value="24" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#FFD7E7F5" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#FFC6DCF2" />
+                    <Setter Property="Foreground" Value="#FF0F1923" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="InlineComboStyle" TargetType="ComboBox">
+            <Setter Property="Background" Value="#FFE4E9EF" />
+            <Setter Property="Foreground" Value="#FF15202B" />
+            <Setter Property="BorderBrush" Value="#FF5E6977" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,0,6,0" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource InlineComboItemStyle}" />
+            <Setter Property="MinHeight" Value="26" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid ClipToBounds="False">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ClipToBounds="False">
+                <Border x:Name="DeleteRevealPanel"
+                    Margin="6,6,6,0"
+                    Width="106"
+                    HorizontalAlignment="Right"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Opacity="1"
+                    IsHitTestVisible="False">
+                <Grid>
+                    <Button x:Name="DeleteCollectionButton"
+                            Margin="0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource DeleteActionButtonStyle}"
+                            Content="删除集纳"
+                            Click="OnDeleteCollectionClick">
+                        <Button.RenderTransform>
+                            <TranslateTransform X="4" />
+                        </Button.RenderTransform>
+                    </Button>
+                </Grid>
+            </Border>
+
+                <Border x:Name="CardChrome"
+                    Margin="6,6,6,0"
+                    Padding="8,8"
+                    BorderBrush="#FF354250"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Background="#FF1B2430"
+                    PreviewMouseLeftButtonDown="OnCardPreviewMouseLeftButtonDown"
+                    PreviewMouseMove="OnCardPreviewMouseMove"
+                    PreviewMouseLeftButtonUp="OnCardPreviewMouseLeftButtonUp"
+                    PreviewMouseRightButtonUp="OnCardPreviewMouseRightButtonUp">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="CardTranslate" X="0" />
+                </Border.RenderTransform>
+                <Grid>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0">
+                            <TextBlock FontWeight="SemiBold"
+                                       Foreground="#FFE8EEF5"
+                                       FontSize="13"
+                                       Text="{Binding Resource.DisplayTitle, ElementName=Root}"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Margin="0,4,0,0"
+                                       Foreground="#FFA7B6C7"
+                                       FontSize="11"
+                                       Visibility="{Binding DetailVisibility, ElementName=Root}"
+                                       Text="{Binding StatusText, ElementName=Root}"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+
+                        <ScrollViewer Grid.Row="1"
+                                      HorizontalScrollBarVisibility="Hidden"
+                                      VerticalScrollBarVisibility="Disabled"
+                                      Visibility="{Binding DetailVisibility, ElementName=Root}"
+                                      Margin="0,8,0,0"
+                                      HorizontalAlignment="Right">
+                            <ItemsControl ItemsSource="{Binding VisibleTags, ElementName=Root}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,6,0"
+                                                Padding="8,2"
+                                                Background="#FF213444"
+                                                BorderBrush="#FF5D7892"
+                                                BorderThickness="1"
+                                                CornerRadius="10">
+                                            <TextBlock Text="{Binding}"
+                                                       FontSize="10"
+                                                       Foreground="#FFD3E2F4" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <Border x:Name="HoverMask"
+                            Background="#D9253445"
+                            CornerRadius="7"
+                            Opacity="0"
+                            IsHitTestVisible="False" />
+
+                    <Grid x:Name="HoverActions"
+                          Opacity="0"
+                          Visibility="Collapsed"
+                          IsHitTestVisible="False">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Grid Grid.Column="0" Margin="3">
+                            <Border x:Name="RawActionPlaceholder"
+                                    BorderBrush="#FF98B5D4"
+                                    BorderThickness="1"
+                                    CornerRadius="7"
+                                    Background="#22233449"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="RawActionSurface"
+                                    Style="{StaticResource HoverActionSurfaceStyle}"
+                                    PreviewMouseLeftButtonDown="OnRawActionMouseLeftButtonDown"
+                                    PreviewMouseLeftButtonUp="OnActionSurfaceMouseLeftButtonUp"
+                                    MouseMove="OnActionSurfaceMouseMove">
+                                <Border.RenderTransform>
+                                    <TranslateTransform />
+                                </Border.RenderTransform>
+                                <StackPanel>
+                                    <TextBlock Text="原始文件" FontWeight="SemiBold" Foreground="#FFF0F5FB" />
+                                    <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="#FFC8D6E8" Text="拖拽导出" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Grid Grid.Column="1" Margin="3">
+                            <Border x:Name="ProcessedActionPlaceholder"
+                                    BorderBrush="#FF98B5D4"
+                                    BorderThickness="1"
+                                    CornerRadius="7"
+                                    Background="#22233449"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="ProcessedActionSurface"
+                                    Style="{StaticResource ProcessedActionSurfaceStyle}"
+                                    PreviewMouseLeftButtonDown="OnProcessedActionMouseLeftButtonDown"
+                                    PreviewMouseLeftButtonUp="OnActionSurfaceMouseLeftButtonUp"
+                                    MouseMove="OnActionSurfaceMouseMove">
+                                <Border.RenderTransform>
+                                    <TranslateTransform />
+                                </Border.RenderTransform>
+                                <StackPanel>
+                                    <TextBlock Text="处理结果" FontWeight="SemiBold" Foreground="#FFF0F5FB" />
+                                    <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="#FFC8D6E8" Text="{Binding ProcessedRouteSummary, ElementName=Root}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border x:Name="InlineConfigHost"
+                Grid.Row="1"
+            Margin="6,0,6,8"
+            Background="#FF1B2430"
+            BorderBrush="#FF354250"
+                BorderThickness="1"
+            CornerRadius="10"
+                Visibility="Collapsed"
+                Opacity="0"
+                PreviewMouseLeftButtonDown="OnInlineConfigHostPreviewMouseLeftButtonDown"
+                PreviewMouseRightButtonUp="OnInlineConfigHostPreviewMouseRightButtonUp">
+            <Border Margin="8"
+                    Background="#FFD5DBE2"
+                    BorderBrush="#FF9EA7B1"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="8,8,8,6">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="预设" />
+                    <ComboBox x:Name="InlinePresetCombo" Grid.Row="0" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlinePresetChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="隐私" />
+                    <ComboBox x:Name="InlinePrivacyCombo" Grid.Row="1" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="同步" />
+                    <ComboBox x:Name="InlineSyncCombo" Grid.Row="2" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="模型" />
+                    <ComboBox x:Name="InlineModelCombo" Grid.Row="3" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="路由" />
+                    <ComboBox x:Name="InlineRouteCombo" Grid.Row="4" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+
+                    <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="持久化" />
+                    <ComboBox x:Name="InlinePersistenceCombo" Grid.Row="5" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                </Grid>
+            </Border>
+        </Border>
+
+         <Popup x:Name="DragGhostPopup"
+             Placement="AbsolutePoint"
+               AllowsTransparency="True"
+               StaysOpen="True"
+               IsHitTestVisible="False">
+            <Border x:Name="DragGhostBorder"
+                    Padding="10,8"
+                    CornerRadius="7"
+                    Background="#DD243449"
+                    BorderBrush="#FFA4C3E5"
+                    BorderThickness="1"
+                    Opacity="0.95">
+                <StackPanel>
+                    <TextBlock x:Name="DragGhostTitleText"
+                               FontWeight="SemiBold"
+                               Foreground="#FFF0F5FB" />
+                    <TextBlock x:Name="DragGhostSubtitleText"
+                               Margin="0,3,0,0"
+                               FontSize="11"
+                               Foreground="#FFC8D6E8" />
+                </StackPanel>
+            </Border>
+        </Popup>
+    </Grid>
+</UserControl>
