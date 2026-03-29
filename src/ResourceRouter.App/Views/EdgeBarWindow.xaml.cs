@@ -537,6 +537,20 @@ public partial class EdgeBarWindow : Window
         {
             _stateMachine.Collapse();
         }
+        else
+        {
+            try
+            {
+                var dataObject = Clipboard.GetDataObject();
+                if (dataObject != null)
+                {
+                    StagePendingDrop(dataObject, DropIngressChannel.Wpf);
+                }
+            }
+            catch
+            {
+            }
+        }
 
         e.Handled = true;
     }
@@ -709,6 +723,23 @@ public partial class EdgeBarWindow : Window
 
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            try
+            {
+                var dataObject = Clipboard.GetDataObject();
+                if (dataObject != null)
+                {
+                    StagePendingDrop(dataObject, DropIngressChannel.Wpf);
+                    e.Handled = true;
+                }
+            }
+            catch
+            {
+            }
+            return;
+        }
+
         if (e.Key != Key.Escape)
         {
             return;
