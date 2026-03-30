@@ -14,18 +14,37 @@ public enum EdgeBarVisualState
 
 public sealed class EdgeBarStateMachine
 {
+    private bool _isVisibilityPinned;
+
     public EdgeBarVisualState CurrentState { get; private set; } = EdgeBarVisualState.Hidden;
+
+    public double PinnedMinimumOpacity { get; set; } = AppInteractionDefaults.ProximityFade.PinnedMinimumOpacity;
 
     public event Action<double>? SetOpacityRequested;
     public event Action? ExpandDropPanelRequested;
     public event Action? ShowCardListRequested;
     public event Action? CollapseAllRequested;
 
+    public void PinVisibility()
+    {
+        _isVisibilityPinned = true;
+    }
+
+    public void UnpinVisibility()
+    {
+        _isVisibilityPinned = false;
+    }
+
     public void MouseProximityChanged(double opacity)
     {
+        if (_isVisibilityPinned)
+        {
+            opacity = Math.Max(opacity, PinnedMinimumOpacity);
+        }
+
         if (opacity <= 0)
         {
-            if (CurrentState is EdgeBarVisualState.Peeking or EdgeBarVisualState.Visible)
+            if (!_isVisibilityPinned && (CurrentState is EdgeBarVisualState.Peeking or EdgeBarVisualState.Visible))
             {
                 CurrentState = EdgeBarVisualState.Hidden;
                 SetOpacityRequested?.Invoke(0);
@@ -37,6 +56,10 @@ public sealed class EdgeBarStateMachine
         if (CurrentState is EdgeBarVisualState.Hidden or EdgeBarVisualState.Peeking)
         {
             CurrentState = EdgeBarVisualState.Peeking;
+            SetOpacityRequested?.Invoke(opacity);
+        }
+        else if (_isVisibilityPinned)
+        {
             SetOpacityRequested?.Invoke(opacity);
         }
     }

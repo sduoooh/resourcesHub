@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ResourceRouter.Core.Abstractions;
 using ResourceRouter.Core.Models;
+using ResourceRouter.Infrastructure.Storage;
 using ResourceRouter.PluginSdk;
 
 namespace ResourceRouter.App.Services;
@@ -116,7 +117,9 @@ internal sealed class WhisperCliAudioTranscriptionEngine : IAudioTranscriptionEn
             ? "models/ggml-base.bin"
             : config.AudioTranscriptionModel.Trim();
 
-        var outputBase = Path.Combine(Path.GetTempPath(), "resource-router-whisper-" + Guid.NewGuid().ToString("N"));
+        var outputBase = Path.Combine(
+            LocalPathProvider.AudioTranscriptionTempDirectory,
+            "resource-router-whisper-" + Guid.NewGuid().ToString("N"));
         var outputFile = outputBase + ".txt";
 
         try

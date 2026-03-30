@@ -1,36 +1,30 @@
 INSERT INTO resources (
-    id, created_at, source_uri, internal_path, persistence_policy, source_last_modified_at, original_file_name, mime_type, file_size, source,
-    processed_file_path, processed_text, processed_route_id, thumbnail_path, ai_summary,
-    auto_tags_json, user_title, user_notes, user_tags_json,
+    id, created_at, persistence_policy, original_file_name, mime_type, file_size, source,
+    thumbnail_path, summary,
+    condition_tags_json, title_override, annotations, property_tags_json,
     privacy, sync_policy, sync_target_devices_json, processing_model,
     permission_preset_id, state, waiting_expires_at, last_error,
-    feature_hash, health_json, last_health_check_at, last_health_check_passed, last_health_check_message)
+    feature_hash, health_json)
 VALUES (
-    @Id, @CreatedAt, @SourceUri, @InternalPath, @PersistencePolicy, @SourceLastModifiedAt, @OriginalFileName, @MimeType, @FileSize, @Source,
-    @ProcessedFilePath, @ProcessedText, @ProcessedRouteId, @ThumbnailPath, @Summary,
-    @AutoTags, @UserTitle, @UserNotes, @UserTags,
+    @Id, @CreatedAt, @PersistencePolicy, @OriginalFileName, @MimeType, @FileSize, @Source,
+    @ThumbnailPath, @Summary,
+    @ConditionTags, @TitleOverride, @Annotations, @PropertyTags,
     @Privacy, @SyncPolicy, @SyncTargetDevices, @ProcessingModel,
     @PermissionPresetId, @State, @WaitingExpiresAt, @LastError,
-    @FeatureHash, @Health, @LastHealthCheckAt, @LastHealthCheckPassed, @LastHealthCheckMessage)
+    @FeatureHash, @Health)
 ON CONFLICT(id) DO UPDATE SET
     created_at = excluded.created_at,
-    source_uri = excluded.source_uri,
-    internal_path = excluded.internal_path,
     persistence_policy = excluded.persistence_policy,
-    source_last_modified_at = excluded.source_last_modified_at,
     original_file_name = excluded.original_file_name,
     mime_type = excluded.mime_type,
     file_size = excluded.file_size,
     source = excluded.source,
-    processed_file_path = excluded.processed_file_path,
-    processed_text = excluded.processed_text,
-    processed_route_id = excluded.processed_route_id,
     thumbnail_path = excluded.thumbnail_path,
-    ai_summary = excluded.ai_summary,
-    auto_tags_json = excluded.auto_tags_json,
-    user_title = excluded.user_title,
-    user_notes = excluded.user_notes,
-    user_tags_json = excluded.user_tags_json,
+    summary = excluded.summary,
+    condition_tags_json = excluded.condition_tags_json,
+    title_override = excluded.title_override,
+    annotations = excluded.annotations,
+    property_tags_json = excluded.property_tags_json,
     privacy = excluded.privacy,
     sync_policy = excluded.sync_policy,
     sync_target_devices_json = excluded.sync_target_devices_json,
@@ -40,7 +34,4 @@ ON CONFLICT(id) DO UPDATE SET
     waiting_expires_at = excluded.waiting_expires_at,
     last_error = excluded.last_error,
     feature_hash = excluded.feature_hash,
-    health_json = excluded.health_json,
-    last_health_check_at = excluded.last_health_check_at,
-    last_health_check_passed = excluded.last_health_check_passed,
-    last_health_check_message = excluded.last_health_check_message;
+    health_json = excluded.health_json;

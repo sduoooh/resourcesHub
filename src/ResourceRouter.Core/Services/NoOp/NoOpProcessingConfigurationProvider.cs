@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,4 +20,9 @@ public sealed class NoOpProcessingCapabilityApi : IProcessingCapabilityApi
     public Task<OcrResult> RunOcrAsync(string filePath, CancellationToken cancellationToken = default) => Task.FromResult(new OcrResult { Success = false, ErrorMessage = "" });
     public Task<AudioTranscriptionResult> RunAudioTranscriptionAsync(string filePath, CancellationToken cancellationToken = default) => Task.FromResult(new AudioTranscriptionResult { Success = false, ErrorMessage = "" });
     public Task<FeatureSubmissionResult> SubmitStructuredFeaturesAsync(StructuredFeatureSet featureSet, CancellationToken cancellationToken = default) => Task.FromResult(new FeatureSubmissionResult { Success = false, ErrorMessage = "" });
+    public Task<TagMutationResult> AddTagAsync(Guid resourceId, string tag, TagCategory category, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new TagMutationResult { Success = false, Status = "disabled", ErrorMessage = "Capability API is disabled." });
+
+    public Task<TagMutationResult> RemoveTagAsync(Guid resourceId, string tag, TagCategory? category = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new TagMutationResult { Success = false, Status = "disabled", ErrorMessage = "Capability API is disabled." });
 }

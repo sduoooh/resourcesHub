@@ -37,7 +37,7 @@
             <TextBox x:Name="TitleBox" Margin="0,4,0,8" Height="28" />
             <TextBlock Text="备注（可选）" />
             <TextBox x:Name="NotesBox" Margin="0,4,0,8" Height="56" AcceptsReturn="True" TextWrapping="Wrap" />
-            <TextBlock Text="标签（逗号分隔）" />
+            <TextBlock Text="属性标签（逗号分隔）" />
             <TextBox x:Name="TagsBox" Margin="0,4,0,0" Height="28" />
         </StackPanel>
 

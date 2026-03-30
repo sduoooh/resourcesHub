@@ -22,10 +22,22 @@ public sealed class SearchEngine : ISearchIndex
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<Resource>> QueryAsync(string query, int limit, int offset, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<Resource>> QueryAsync(
+        string query,
+        int limit,
+        int offset,
+        IReadOnlyList<string>? tagFilters = null,
+        bool applyConditionVisibility = true,
+        CancellationToken cancellationToken = default)
     {
         var ftsQuery = BuildFtsQuery(query);
-        return _resourceStore.SearchAsync(ftsQuery, limit, offset, cancellationToken);
+        return _resourceStore.SearchAsync(
+            ftsQuery,
+            limit,
+            offset,
+            tagFilters,
+            applyConditionVisibility,
+            cancellationToken);
     }
 
     private static string BuildFtsQuery(string query)

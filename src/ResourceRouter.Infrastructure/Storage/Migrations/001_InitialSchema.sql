@@ -1,23 +1,22 @@
-CREATE TABLE IF NOT EXISTS resources (
+DROP TABLE IF EXISTS fts_resources;
+DROP TABLE IF EXISTS resource_processed_payloads;
+DROP TABLE IF EXISTS resource_raw_payloads;
+DROP TABLE IF EXISTS resources;
+
+CREATE TABLE resources (
     id TEXT NOT NULL PRIMARY KEY,
     created_at TEXT NOT NULL,
-    source_uri TEXT NULL,
-    internal_path TEXT NULL,
     persistence_policy INTEGER NOT NULL DEFAULT 0,
-    source_last_modified_at TEXT NULL,
     original_file_name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     source INTEGER NOT NULL,
-    processed_file_path TEXT NULL,
-    processed_text TEXT NULL,
-    processed_route_id TEXT NULL,
     thumbnail_path TEXT NULL,
-    ai_summary TEXT NULL,
-    auto_tags_json TEXT NOT NULL,
-    user_title TEXT NULL,
-    user_notes TEXT NULL,
-    user_tags_json TEXT NOT NULL,
+    summary TEXT NULL,
+    condition_tags_json TEXT NOT NULL,
+    title_override TEXT NULL,
+    annotations TEXT NULL,
+    property_tags_json TEXT NOT NULL,
     privacy INTEGER NOT NULL,
     sync_policy INTEGER NOT NULL,
     sync_target_devices_json TEXT NOT NULL,
@@ -27,17 +26,36 @@ CREATE TABLE IF NOT EXISTS resources (
     waiting_expires_at TEXT NULL,
     last_error TEXT NULL,
     feature_hash TEXT NULL,
-    last_health_check_at TEXT NULL,
-    last_health_check_passed INTEGER NULL,
-    last_health_check_message TEXT NULL
+    health_json TEXT NULL
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS fts_resources USING fts5(
+CREATE TABLE resource_raw_payloads (
+    resource_id TEXT NOT NULL PRIMARY KEY,
+    raw_kind INTEGER NOT NULL,
+    source_uri TEXT NULL,
+    internal_path TEXT NULL,
+    source_last_modified_at TEXT NULL,
+    source_app_hint TEXT NULL,
+    captured_at TEXT NULL,
+    original_suggested_name TEXT NULL,
+    FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE
+);
+
+CREATE TABLE resource_processed_payloads (
+    resource_id TEXT NOT NULL PRIMARY KEY,
+    route_id TEXT NULL,
+    processed_file_path TEXT NULL,
+    processed_text TEXT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE
+);
+
+CREATE VIRTUAL TABLE fts_resources USING fts5(
     resource_id UNINDEXED,
     title,
     notes,
     processed_text,
-    ai_summary,
+    summary,
     tags
 );
 

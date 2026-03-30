@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using ResourceRouter.App.State;
 using ResourceRouter.Core.Models;
 
 namespace ResourceRouter.App.Services;
@@ -26,8 +27,8 @@ internal sealed class DropIngressCoordinator
 
     public DropIngressCoordinator(TimeSpan? dedupWindow = null, TimeSpan? wpfDelayWhenComEnabled = null)
     {
-        _dedupWindow = dedupWindow ?? TimeSpan.FromMilliseconds(1200);
-        _wpfDelayWhenComEnabled = wpfDelayWhenComEnabled ?? TimeSpan.FromMilliseconds(140);
+        _dedupWindow = dedupWindow ?? AppInteractionDefaults.DropIngress.DedupWindow;
+        _wpfDelayWhenComEnabled = wpfDelayWhenComEnabled ?? AppInteractionDefaults.DropIngress.WpfDelayWhenComEnabled;
     }
 
     public async Task<bool> ShouldProcessAsync(

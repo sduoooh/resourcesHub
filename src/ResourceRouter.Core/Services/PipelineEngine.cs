@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using ResourceRouter.Core.Abstractions;
@@ -22,6 +23,7 @@ public sealed class PipelineEngine
     private readonly IResourceFeatureExtractor _featureExtractor;
     private readonly IResourceGovernanceProvider _governanceProvider;
     private readonly IProcessingConfigurationProvider _processingConfigurationProvider;
+    private readonly IResourceMetadataFacetPolicy _metadataFacetPolicy;
     private readonly IAppLogger? _logger;
     private readonly SemaphoreSlim _processingSemaphore;
     private readonly SemaphoreSlim _syncSemaphore;
@@ -40,6 +42,7 @@ public sealed class PipelineEngine
         IResourceFeatureExtractor featureExtractor,
         IResourceGovernanceProvider governanceProvider,
         IProcessingConfigurationProvider processingConfigurationProvider,
+        IResourceMetadataFacetPolicy? metadataFacetPolicy = null,
         IAppLogger? logger = null,
         int maxConcurrentProcessing = 2,
         int maxConcurrentSync = 1)
@@ -54,6 +57,7 @@ public sealed class PipelineEngine
         _featureExtractor = featureExtractor;
         _governanceProvider = governanceProvider;
         _processingConfigurationProvider = processingConfigurationProvider;
+        _metadataFacetPolicy = metadataFacetPolicy ?? new DefaultResourceMetadataFacetPolicy();
         _logger = logger;
         _processingSemaphore = new SemaphoreSlim(Math.Max(1, maxConcurrentProcessing), Math.Max(1, maxConcurrentProcessing));
         _syncSemaphore = new SemaphoreSlim(Math.Max(1, maxConcurrentSync), Math.Max(1, maxConcurrentSync));
@@ -183,9 +187,22 @@ public sealed class PipelineEngine
         pending.Resource.ProcessingModel = updatedResource.ProcessingModel;
         pending.Resource.PersistencePolicy = updatedResource.PersistencePolicy;
         pending.Resource.ProcessedRouteId = updatedResource.ProcessedRouteId;
-        pending.Resource.UserTitle = updatedResource.UserTitle;
-        pending.Resource.UserNotes = updatedResource.UserNotes;
-        pending.Resource.UserTags = updatedResource.UserTags;
+
+        var updatedFacet = _metadataFacetPolicy.Read(updatedResource);
+        _metadataFacetPolicy.Apply(pending.Resource, new ResourceMetadataFacet
+        {
+            TitleOverride = updatedFacet.TitleOverride,
+            Annotations = updatedFacet.Annotations,
+            Summary = updatedFacet.Summary,
+            ConditionTags = updatedFacet.ConditionTags,
+            PropertyTags = updatedFacet.PropertyTags,
+            OriginalFileName = updatedFacet.OriginalFileName,
+            MimeType = updatedFacet.MimeType,
+            FileSize = updatedFacet.FileSize,
+            Source = updatedFacet.Source,
+            CreatedAt = updatedFacet.CreatedAt,
+            ExtensionMetadata = updatedFacet.ExtensionMetadata
+        });
     }
 
     public async Task ExecutePipelineAsync(Resource resource, CancellationToken cancellationToken = default)
@@ -266,7 +283,7 @@ public sealed class PipelineEngine
                     .ConvertToFriendlyAsync(activePath, convertOptions, cancellationToken)
                     .ConfigureAwait(false);
 
-                resource.ProcessedFilePath = conversion.ProcessedFilePath ?? activePath;
+                resource.ProcessedFilePath = conversion.ProcessedFilePath;
                 resource.ProcessedText = conversion.ProcessedText;
             }
             else
@@ -279,8 +296,30 @@ public sealed class PipelineEngine
             if (resource.ProcessingModel != ModelType.None)
             {
                 var aiResult = await _aiProvider.AnalyzeAsync(resource, cancellationToken).ConfigureAwait(false);
-                resource.Summary = aiResult.Summary;
-                resource.AutoTags = aiResult.Tags;
+                var currentFacet = _metadataFacetPolicy.Read(resource);
+                var mergedPropertyTags = currentFacet.PropertyTags
+                    .Concat(aiResult.Tags ?? Array.Empty<string>())
+                    .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+                    .Select(static tag => tag.Trim().TrimStart('#'))
+                    .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                _metadataFacetPolicy.Apply(resource, new ResourceMetadataFacet
+                {
+                    TitleOverride = currentFacet.TitleOverride,
+                    Annotations = currentFacet.Annotations,
+                    Summary = aiResult.Summary,
+                    ConditionTags = currentFacet.ConditionTags,
+                    PropertyTags = mergedPropertyTags,
+                    OriginalFileName = currentFacet.OriginalFileName,
+                    MimeType = currentFacet.MimeType,
+                    FileSize = currentFacet.FileSize,
+                    Source = currentFacet.Source,
+                    CreatedAt = currentFacet.CreatedAt,
+                    ExtensionMetadata = currentFacet.ExtensionMetadata
+                });
             }
 
             resource.ThumbnailPath = await _thumbnailProvider.GenerateAsync(resource, cancellationToken).ConfigureAwait(false);

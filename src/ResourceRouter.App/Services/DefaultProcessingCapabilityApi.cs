@@ -34,16 +34,19 @@ public sealed class DefaultProcessingCapabilityApi : IProcessingCapabilityApi
     private readonly AudioTranscriptionEngineRouter _audioRouter;
     private readonly ResourceManager? _resourceManager;
     private readonly IAppLogger? _logger;
+    private readonly IResourceMetadataFacetPolicy _metadataFacetPolicy;
 
     public DefaultProcessingCapabilityApi(
         Func<AppConfig> configAccessor,
         ResourceManager? resourceManager = null,
         IAppLogger? logger = null,
-        HttpClient? httpClient = null)
+        HttpClient? httpClient = null,
+        IResourceMetadataFacetPolicy? metadataFacetPolicy = null)
     {
         _configAccessor = configAccessor;
         _resourceManager = resourceManager;
         _logger = logger;
+        _metadataFacetPolicy = metadataFacetPolicy ?? new DefaultResourceMetadataFacetPolicy();
 
         _ocrRouter = new OcrEngineRouter(new IOcrEngine[]
         {
@@ -214,6 +217,211 @@ public sealed class DefaultProcessingCapabilityApi : IProcessingCapabilityApi
         };
     }
 
+    public async Task<TagMutationResult> AddTagAsync(
+        Guid resourceId,
+        string tag,
+        TagCategory category,
+        CancellationToken cancellationToken = default)
+    {
+        if (resourceId == Guid.Empty)
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "invalid-request",
+                ErrorMessage = "ResourceId is required."
+            };
+        }
+
+        var normalized = NormalizeTag(tag);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "invalid-request",
+                ErrorMessage = "Tag is empty."
+            };
+        }
+
+        if (_resourceManager is null)
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "unavailable",
+                ErrorMessage = "Resource manager is unavailable."
+            };
+        }
+
+        var resource = await _resourceManager.GetByIdAsync(resourceId, cancellationToken).ConfigureAwait(false);
+        if (resource is null)
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "not-found",
+                ErrorMessage = "Resource not found."
+            };
+        }
+
+        var currentFacet = _metadataFacetPolicy.Read(resource);
+
+        var conditionTags = currentFacet.ConditionTags
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(NormalizeTag)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var propertyTags = currentFacet.PropertyTags
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(NormalizeTag)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var changed = false;
+        if (category == TagCategory.Condition)
+        {
+            changed = conditionTags.Add(normalized) || propertyTags.Remove(normalized);
+        }
+        else
+        {
+            changed = propertyTags.Add(normalized) || conditionTags.Remove(normalized);
+        }
+
+        if (!changed)
+        {
+            return new TagMutationResult
+            {
+                Success = true,
+                Status = "unchanged"
+            };
+        }
+
+        _metadataFacetPolicy.Apply(resource, new ResourceMetadataFacet
+        {
+            TitleOverride = currentFacet.TitleOverride,
+            Annotations = currentFacet.Annotations,
+            Summary = currentFacet.Summary,
+            ConditionTags = conditionTags.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
+            PropertyTags = propertyTags.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
+            OriginalFileName = currentFacet.OriginalFileName,
+            MimeType = currentFacet.MimeType,
+            FileSize = currentFacet.FileSize,
+            Source = currentFacet.Source,
+            CreatedAt = currentFacet.CreatedAt,
+            ExtensionMetadata = currentFacet.ExtensionMetadata
+        });
+
+        await _resourceManager.UpdateAsync(resource, cancellationToken).ConfigureAwait(false);
+
+        return new TagMutationResult
+        {
+            Success = true,
+            Status = "stored"
+        };
+    }
+
+    public async Task<TagMutationResult> RemoveTagAsync(
+        Guid resourceId,
+        string tag,
+        TagCategory? category = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (resourceId == Guid.Empty)
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "invalid-request",
+                ErrorMessage = "ResourceId is required."
+            };
+        }
+
+        var normalized = NormalizeTag(tag);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "invalid-request",
+                ErrorMessage = "Tag is empty."
+            };
+        }
+
+        if (_resourceManager is null)
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "unavailable",
+                ErrorMessage = "Resource manager is unavailable."
+            };
+        }
+
+        var resource = await _resourceManager.GetByIdAsync(resourceId, cancellationToken).ConfigureAwait(false);
+        if (resource is null)
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "not-found",
+                ErrorMessage = "Resource not found."
+            };
+        }
+
+        var currentFacet = _metadataFacetPolicy.Read(resource);
+
+        var conditionTags = currentFacet.ConditionTags
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(NormalizeTag)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var propertyTags = currentFacet.PropertyTags
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(NormalizeTag)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var changed = category switch
+        {
+            TagCategory.Condition => conditionTags.Remove(normalized),
+            TagCategory.Property => propertyTags.Remove(normalized),
+            _ => conditionTags.Remove(normalized) || propertyTags.Remove(normalized)
+        };
+
+        if (!changed)
+        {
+            return new TagMutationResult
+            {
+                Success = true,
+                Status = "unchanged"
+            };
+        }
+
+        _metadataFacetPolicy.Apply(resource, new ResourceMetadataFacet
+        {
+            TitleOverride = currentFacet.TitleOverride,
+            Annotations = currentFacet.Annotations,
+            Summary = currentFacet.Summary,
+            ConditionTags = conditionTags.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
+            PropertyTags = propertyTags.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
+            OriginalFileName = currentFacet.OriginalFileName,
+            MimeType = currentFacet.MimeType,
+            FileSize = currentFacet.FileSize,
+            Source = currentFacet.Source,
+            CreatedAt = currentFacet.CreatedAt,
+            ExtensionMetadata = currentFacet.ExtensionMetadata
+        });
+
+        await _resourceManager.UpdateAsync(resource, cancellationToken).ConfigureAwait(false);
+
+        return new TagMutationResult
+        {
+            Success = true,
+            Status = "stored"
+        };
+    }
+
     private static bool IsFeatureizationMechanismEnabled(AppConfig config)
     {
         foreach (var item in config.FeatureizationByType)
@@ -333,5 +541,15 @@ public sealed class DefaultProcessingCapabilityApi : IProcessingCapabilityApi
         var bytes = Encoding.UTF8.GetBytes(canonicalPayload);
         var hashBytes = SHA256.HashData(bytes);
         return Convert.ToHexString(hashBytes).ToLowerInvariant();
+    }
+
+    private static string NormalizeTag(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        return raw.Trim().TrimStart('#');
     }
 }

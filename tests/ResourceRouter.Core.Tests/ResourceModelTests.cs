@@ -18,10 +18,10 @@ public class ResourceModelTests
             FileSize = 128,
             Source = ResourceSource.FromVSCode,
             ProcessedText = "hello",
-            UserTitle = "my title",
-            UserNotes = "notes",
-            UserTags = new[] { "a", "b" },
-            AutoTags = new[] { "c" },
+            TitleOverride = "my title",
+            Annotations = "notes",
+            ConditionTags = new[] { "config" },
+            PropertyTags = new[] { "a", "b", "c" },
             Privacy = PrivacyLevel.Private,
             SyncPolicy = SyncPolicy.LocalOnly,
             ProcessingModel = ModelType.LocalSmall,
@@ -37,7 +37,7 @@ public class ResourceModelTests
         Assert.Equal(resource.Id, restored!.Id);
         Assert.Equal(resource.SourceUri, restored.SourceUri);
         Assert.Equal(resource.MimeType, restored.MimeType);
-        Assert.Equal(resource.UserTitle, restored.UserTitle);
+        Assert.Equal(resource.TitleOverride, restored.TitleOverride);
         Assert.Equal(resource.State, restored.State);
     }
 }

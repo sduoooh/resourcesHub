@@ -98,6 +98,296 @@
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="ItemContainerStyle" Value="{StaticResource InlineComboItemStyle}" />
             <Setter Property="MinHeight" Value="26" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="DropDownToggle"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="ComboBorder"
+                                                CornerRadius="8"
+                                                Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                BorderBrush="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                BorderThickness="{Binding BorderThickness, RelativeSource={RelativeSource AncestorType=ComboBox}}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="26" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <ContentPresenter Grid.Column="0"
+                                                                  Margin="8,0,0,0"
+                                                                  VerticalAlignment="Center"
+                                                                  HorizontalAlignment="Left"
+                                                                  Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                  ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                  ContentTemplateSelector="{Binding ItemTemplateSelector, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                  ContentStringFormat="{Binding SelectionBoxItemStringFormat, RelativeSource={RelativeSource AncestorType=ComboBox}}" />
+
+                                                <Path Grid.Column="1"
+                                                      Data="M 0 0 L 4 4 L 8 0"
+                                                      Stroke="#FF556475"
+                                                      StrokeThickness="1.4"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ComboBorder" Property="BorderBrush" Value="#FF7E94AB" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border Background="#FFEAF0F5"
+                                        BorderBrush="#FF5E6977"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Margin="0,2,0,0">
+                                    <ScrollViewer CanContentScroll="True" MaxHeight="260">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#FF5F8AB8" />
+                                </Trigger>
+                                <Trigger Property="HasItems" Value="False">
+                                    <Setter TargetName="PART_Popup" Property="MinHeight" Value="32" />
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="DropDownToggle" Property="Opacity" Value="0.6" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="InlineTagTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="#FFE4E9EF" />
+            <Setter Property="Foreground" Value="#FF15202B" />
+            <Setter Property="BorderBrush" Value="#FF5E6977" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="MinHeight" Value="26" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="TextBoxBorder"
+                                CornerRadius="8"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="TextBoxBorder" Property="BorderBrush" Value="#FF5F8AB8" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TextBoxBorder" Property="BorderBrush" Value="#FF7E94AB" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="TextBoxBorder" Property="Opacity" Value="0.6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="InlineTagButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#FF243141" />
+            <Setter Property="Foreground" Value="#FFDFE8F2" />
+            <Setter Property="BorderBrush" Value="#FF5C718B" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="MinHeight" Value="26" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="TagActionButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TagActionButtonBorder" Property="Background" Value="#FF2F4156" />
+                                <Setter TargetName="TagActionButtonBorder" Property="BorderBrush" Value="#FF86A4C6" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="TagActionButtonBorder" Property="Background" Value="#FF415A76" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="InlineSectionExpanderStyle" TargetType="Expander">
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <Border Background="Transparent">
+                            <StackPanel>
+                                <ToggleButton x:Name="HeaderSite"
+                                              Background="#FF2A3644"
+                                              BorderBrush="#FF5B6F86"
+                                              BorderThickness="1"
+                                              Height="24"
+                                              Padding="8,0"
+                                              Cursor="Hand"
+                                              Foreground="#FFD2DEEA"
+                                              FontSize="11"
+                                              FontWeight="SemiBold"
+                                              Content="{TemplateBinding Header}"
+                                              IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border x:Name="HeaderBorder"
+                                                    Background="{TemplateBinding Background}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                                    CornerRadius="9"
+                                                    Padding="{TemplateBinding Padding}">
+                                                <Grid>
+                                                    <TextBlock Text="{TemplateBinding Content}"
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="{TemplateBinding Foreground}" />
+                                                    <TextBlock x:Name="HeaderGlyph"
+                                                               Text="▸"
+                                                               FontSize="10"
+                                                               Foreground="#FF9EB2C8"
+                                                               HorizontalAlignment="Right"
+                                                               VerticalAlignment="Center"
+                                                               Margin="0,0,2,0" />
+                                                </Grid>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="HeaderBorder" Property="Background" Value="#FF334354" />
+                                                    <Setter TargetName="HeaderBorder" Property="BorderBrush" Value="#FF85A2C4" />
+                                                </Trigger>
+                                                <Trigger Property="IsChecked" Value="True">
+                                                    <Setter TargetName="HeaderGlyph" Property="Text" Value="▾" />
+                                                    <Setter TargetName="HeaderBorder" Property="Background" Value="#FF2F3E4F" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+
+                                <ContentPresenter x:Name="ExpandSite"
+                                                  Margin="0,6,0,0"
+                                                  Visibility="Collapsed"
+                                                  Opacity="0"
+                                                  RenderTransformOrigin="0.5,0">
+                                    <ContentPresenter.RenderTransform>
+                                        <ScaleTransform ScaleY="0.98" />
+                                    </ContentPresenter.RenderTransform>
+                                </ContentPresenter>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="True">
+                                <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="ExpandSite" Property="Opacity" Value="1" />
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ExpandSite"
+                                                             Storyboard.TargetProperty="Opacity"
+                                                             From="0"
+                                                             To="1"
+                                                             Duration="0:0:0.14" />
+                                            <DoubleAnimation Storyboard.TargetName="ExpandSite"
+                                                             Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
+                                                             From="0.98"
+                                                             To="1"
+                                                             Duration="0:0:0.14" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                            </Trigger>
+                            <Trigger Property="IsExpanded" Value="False">
+                                <Setter TargetName="ExpandSite" Property="Visibility" Value="Collapsed" />
+                                <Setter TargetName="ExpandSite" Property="Opacity" Value="0" />
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ExpandSite"
+                                                             Storyboard.TargetProperty="Opacity"
+                                                             To="0"
+                                                             Duration="0:0:0.1" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="InlineTagChipToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Margin" Value="0,2,6,2" />
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="MinHeight" Value="24" />
+            <Setter Property="Background" Value="#FF23303D" />
+            <Setter Property="Foreground" Value="#FFB8C6D7" />
+            <Setter Property="BorderBrush" Value="#FF4F6073" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="TagBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="12"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TagBorder" Property="BorderBrush" Value="#FF87A4C6" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="TagBorder" Property="Background" Value="#FF2D6B5B" />
+                                <Setter TargetName="TagBorder" Property="BorderBrush" Value="#FF7FD3BE" />
+                                <Setter Property="Foreground" Value="#FFE9F7F3" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </UserControl.Resources>
 
@@ -274,40 +564,170 @@
                     Background="#FFD5DBE2"
                     BorderBrush="#FF9EA7B1"
                     BorderThickness="1"
-                    CornerRadius="8"
+                    CornerRadius="10"
                     Padding="8,8,8,6">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <Expander Header="基础"
+                              IsExpanded="True"
+                              Style="{StaticResource InlineSectionExpanderStyle}">
+                        <Border Background="#FFE2E8EF"
+                                BorderBrush="#FFA9B6C3"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="8,8,8,6">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="预设" />
-                    <ComboBox x:Name="InlinePresetCombo" Grid.Row="0" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlinePresetChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                                <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="预设" />
+                                <ComboBox x:Name="InlinePresetCombo" Grid.Row="0" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlinePresetChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="隐私" />
-                    <ComboBox x:Name="InlinePrivacyCombo" Grid.Row="1" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="隐私" />
+                                <ComboBox x:Name="InlinePrivacyCombo" Grid.Row="1" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="同步" />
-                    <ComboBox x:Name="InlineSyncCombo" Grid.Row="2" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                                <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="同步" />
+                                <ComboBox x:Name="InlineSyncCombo" Grid.Row="2" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
 
-                    <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="模型" />
-                    <ComboBox x:Name="InlineModelCombo" Grid.Row="3" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                                <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="标题" />
+                                <TextBox x:Name="InlineTitleBox"
+                                         Grid.Row="3"
+                                         Grid.Column="1"
+                                         Margin="0,0,0,6"
+                                         Style="{StaticResource InlineTagTextBoxStyle}"
+                                         TextChanged="OnInlineMetadataTextChanged" />
 
-                    <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="路由" />
-                    <ComboBox x:Name="InlineRouteCombo" Grid.Row="4" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                                <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Top" Foreground="#FF1F2A36" Text="注释" />
+                                <TextBox x:Name="InlineAnnotationsBox"
+                                         Grid.Row="4"
+                                         Grid.Column="1"
+                                         Margin="0,0,0,6"
+                                         Height="56"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         TextChanged="OnInlineMetadataTextChanged" />
 
-                    <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="持久化" />
-                    <ComboBox x:Name="InlinePersistenceCombo" Grid.Row="5" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
-                </Grid>
+                                <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Top" Foreground="#FF1F2A36" Text="标签" />
+                                <Border x:Name="InlineTagChipsContainer"
+                                    Grid.Row="5"
+                                        Grid.Column="1"
+                                        Margin="0,0,0,6"
+                                        Background="#FFEAF0F5"
+                                        BorderBrush="#FFA9B6C3"
+                                        BorderThickness="1"
+                                        CornerRadius="10"
+                                        Padding="6,4">
+                                    <ScrollViewer MaxHeight="88"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  CanContentScroll="False">
+                                        <WrapPanel x:Name="InlineTagChipsHost" />
+                                    </ScrollViewer>
+                                </Border>
+
+                                <TextBox x:Name="InlineTagSearchBox"
+                                         Grid.Row="6"
+                                         Grid.Column="0"
+                                         Grid.ColumnSpan="2"
+                                         Margin="0,0,0,6"
+                                         Style="{StaticResource InlineTagTextBoxStyle}"
+                                         ToolTip="搜索已有标签"
+                                         TextChanged="OnInlineTagSearchTextChanged" />
+
+                                <Grid Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Button x:Name="InlineTagTypeToggleButton"
+                                            Grid.Column="0"
+                                            MinWidth="52"
+                                            Margin="0,0,6,0"
+                                            Style="{StaticResource InlineTagButtonStyle}"
+                                            Content="属性"
+                                            Click="OnInlineTagTypeToggleClick" />
+
+                                    <TextBox x:Name="InlineTagInputBox"
+                                             Grid.Column="1"
+                                             Margin="0,0,6,0"
+                                             Style="{StaticResource InlineTagTextBoxStyle}"
+                                             VerticalContentAlignment="Center"
+                                             TextChanged="OnInlineTagInputTextChanged"
+                                             KeyDown="OnInlineTagInputKeyDown" />
+
+                                    <Button x:Name="InlineTagAddButton"
+                                            Grid.Column="2"
+                                            MinWidth="48"
+                                            Style="{StaticResource InlineTagButtonStyle}"
+                                            Content="添加"
+                                            Click="OnInlineTagAddClick" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Expander>
+
+                    <Expander Header="处理机制"
+                              IsExpanded="True"
+                              Style="{StaticResource InlineSectionExpanderStyle}">
+                        <Border Background="#FFE2E8EF"
+                                BorderBrush="#FFA9B6C3"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="8,8,8,6">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="模型" />
+                                <ComboBox x:Name="InlineModelCombo" Grid.Row="0" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="路由" />
+                                <ComboBox x:Name="InlineRouteCombo" Grid.Row="1" Grid.Column="1" Height="26" Margin="0,0,0,0" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                            </Grid>
+                        </Border>
+                    </Expander>
+
+                    <Expander Header="存储机制"
+                              IsExpanded="True"
+                              Style="{StaticResource InlineSectionExpanderStyle}"
+                              Margin="0">
+                        <Border Background="#FFE2E8EF"
+                                BorderBrush="#FFA9B6C3"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="8,8,8,6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="持久化" />
+                                <ComboBox x:Name="InlinePersistenceCombo" Grid.Column="1" Height="26" Margin="0,0,0,0" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
+                            </Grid>
+                        </Border>
+                    </Expander>
+                </StackPanel>
             </Border>
         </Border>
 

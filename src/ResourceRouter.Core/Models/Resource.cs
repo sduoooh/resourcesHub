@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ResourceRouter.Core.Models;
 
@@ -72,6 +73,14 @@ public sealed class Resource
 
     public string? InternalPath { get; set; }
 
+    public RawDropKind RawKind { get; set; } = RawDropKind.File;
+
+    public string? SourceAppHint { get; set; }
+
+    public DateTimeOffset? CapturedAt { get; set; }
+
+    public string? OriginalSuggestedName { get; set; }
+
     public DateTimeOffset? SourceLastModifiedAt { get; set; }
 
     public PersistencePolicy PersistencePolicy { get; set; } = PersistencePolicy.InPlace;
@@ -94,13 +103,15 @@ public sealed class Resource
 
     public string? Summary { get; set; }
 
-    public IReadOnlyList<string> AutoTags { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> ConditionTags { get; set; } = Array.Empty<string>();
 
-    public string? UserTitle { get; set; }
+    public string? TitleOverride { get; set; }
 
-    public string? UserNotes { get; set; }
+    public string? Annotations { get; set; }
 
-    public IReadOnlyList<string> UserTags { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> PropertyTags { get; set; } = Array.Empty<string>();
+
+    public IReadOnlyList<string> AllTags => ConditionTags.Concat(PropertyTags).ToArray();
 
     public PrivacyLevel Privacy { get; set; } = PrivacyLevel.Private;
 
@@ -123,9 +134,9 @@ public sealed class Resource
     public ResourceHealthStatus Health { get; set; } = new();
 
     public string DisplayTitle =>
-        string.IsNullOrWhiteSpace(UserTitle)
+        string.IsNullOrWhiteSpace(TitleOverride)
             ? (string.IsNullOrWhiteSpace(OriginalFileName) ? Id.ToString() : OriginalFileName)
-            : UserTitle;
+            : TitleOverride;
 
     public string? GetActivePath()
     {

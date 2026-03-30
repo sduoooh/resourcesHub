@@ -1,23 +1,27 @@
 SELECT
     r.id AS Id,
     r.created_at AS CreatedAt,
-    r.source_uri AS SourceUri,
-    r.internal_path AS InternalPath,
+    rp.raw_kind AS RawKind,
+    rp.source_uri AS SourceUri,
+    rp.internal_path AS InternalPath,
     r.persistence_policy AS PersistencePolicy,
-    r.source_last_modified_at AS SourceLastModifiedAt,
+    rp.source_last_modified_at AS SourceLastModifiedAt,
+    rp.source_app_hint AS SourceAppHint,
+    rp.captured_at AS CapturedAt,
+    rp.original_suggested_name AS OriginalSuggestedName,
     r.original_file_name AS OriginalFileName,
     r.mime_type AS MimeType,
     r.file_size AS FileSize,
     r.source AS Source,
-    r.processed_file_path AS ProcessedFilePath,
-    r.processed_text AS ProcessedText,
-    r.processed_route_id AS ProcessedRouteId,
+    pp.processed_file_path AS ProcessedFilePath,
+    pp.processed_text AS ProcessedText,
+    pp.route_id AS ProcessedRouteId,
     r.thumbnail_path AS ThumbnailPath,
-    r.ai_summary AS Summary,
-    r.auto_tags_json AS AutoTags,
-    r.user_title AS UserTitle,
-    r.user_notes AS UserNotes,
-    r.user_tags_json AS UserTags,
+    r.summary AS Summary,
+    r.condition_tags_json AS ConditionTags,
+    r.title_override AS TitleOverride,
+    r.annotations AS Annotations,
+    r.property_tags_json AS PropertyTags,
     r.privacy AS Privacy,
     r.sync_policy AS SyncPolicy,
     r.sync_target_devices_json AS SyncTargetDevices,
@@ -27,12 +31,12 @@ SELECT
     r.waiting_expires_at AS WaitingExpiresAt,
     r.last_error AS LastError,
     r.feature_hash AS FeatureHash,
-    r.health_json AS Health,
-    r.last_health_check_at AS LastHealthCheckAt,
-    r.last_health_check_passed AS LastHealthCheckPassed,
-    r.last_health_check_message AS LastHealthCheckMessage
+    r.health_json AS Health
 FROM fts_resources f
 INNER JOIN resources r ON r.id = f.resource_id
+LEFT JOIN resource_raw_payloads rp ON rp.resource_id = r.id
+LEFT JOIN resource_processed_payloads pp ON pp.resource_id = r.id
 WHERE fts_resources MATCH @Query
+/*TAG_FILTERS*/
 ORDER BY r.created_at DESC
 LIMIT @Limit OFFSET @Offset;

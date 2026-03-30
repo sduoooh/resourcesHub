@@ -5,6 +5,10 @@ namespace ResourceRouter.Infrastructure.Storage;
 
 public static class LocalPathProvider
 {
+    private const string ConfigHubTempFolderName = "config-hub";
+    private const string AudioTranscriptionTempFolderName = "audio-transcription";
+    private const string TestTempFolderName = "tests";
+
     public static string RootDirectory { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ResourceRouter");
 
@@ -22,6 +26,24 @@ public static class LocalPathProvider
 
     public static string PluginsDirectory => Path.Combine(RootDirectory, "plugins");
 
+    public static string ConfigHubTempDirectory => EnsureTempSubdirectory(ConfigHubTempFolderName);
+
+    public static string AudioTranscriptionTempDirectory => EnsureTempSubdirectory(AudioTranscriptionTempFolderName);
+
+    public static string TestTempDirectory => EnsureTempSubdirectory(TestTempFolderName);
+
+    public static string EnsureTempSubdirectory(string folderName)
+    {
+        if (string.IsNullOrWhiteSpace(folderName))
+        {
+            throw new ArgumentException("folderName is required.", nameof(folderName));
+        }
+
+        var path = Path.Combine(TempDirectory, folderName);
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
     public static void EnsureAll()
     {
         Directory.CreateDirectory(RootDirectory);
@@ -32,5 +54,8 @@ public static class LocalPathProvider
         Directory.CreateDirectory(DbDirectory);
         Directory.CreateDirectory(LogsDirectory);
         Directory.CreateDirectory(PluginsDirectory);
+        Directory.CreateDirectory(Path.Combine(TempDirectory, ConfigHubTempFolderName));
+        Directory.CreateDirectory(Path.Combine(TempDirectory, AudioTranscriptionTempFolderName));
+        Directory.CreateDirectory(Path.Combine(TempDirectory, TestTempFolderName));
     }
 }

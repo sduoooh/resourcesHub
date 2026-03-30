@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using ResourceRouter.Core.Abstractions;
 using ResourceRouter.Core.Models;
 
 namespace ResourceRouter.App.Views;
@@ -10,11 +11,13 @@ namespace ResourceRouter.App.Views;
 public partial class ConfigDialog : Window
 {
     private IReadOnlyList<PermissionPreset> _presets = Array.Empty<PermissionPreset>();
+    private readonly IResourceMetadataFacetPolicy _metadataFacetPolicy;
 
-    public ConfigDialog(Resource resource)
+    public ConfigDialog(Resource resource, IResourceMetadataFacetPolicy metadataFacetPolicy)
     {
         InitializeComponent();
         EditedResource = resource;
+        _metadataFacetPolicy = metadataFacetPolicy ?? throw new ArgumentNullException(nameof(metadataFacetPolicy));
 
         _presets = PermissionPreset.BuiltIn.Values.ToArray();
         PresetCombo.ItemsSource = _presets;
@@ -34,9 +37,10 @@ public partial class ConfigDialog : Window
         SyncCombo.SelectedItem = resource.SyncPolicy;
         ModelCombo.SelectedItem = resource.ProcessingModel;
 
-        TitleBox.Text = resource.UserTitle;
-        NotesBox.Text = resource.UserNotes;
-        TagsBox.Text = string.Join(",", resource.UserTags);
+        var metadataFacet = _metadataFacetPolicy.Read(resource);
+        TitleBox.Text = metadataFacet.TitleOverride;
+        NotesBox.Text = metadataFacet.Annotations;
+        TagsBox.Text = string.Join(",", metadataFacet.PropertyTags);
     }
 
     public Resource EditedResource { get; }
@@ -51,13 +55,28 @@ public partial class ConfigDialog : Window
         EditedResource.Privacy = (PrivacyLevel)PrivacyCombo.SelectedItem;
         EditedResource.SyncPolicy = (SyncPolicy)SyncCombo.SelectedItem;
         EditedResource.ProcessingModel = (ModelType)ModelCombo.SelectedItem;
-        EditedResource.UserTitle = string.IsNullOrWhiteSpace(TitleBox.Text) ? null : TitleBox.Text.Trim();
-        EditedResource.UserNotes = string.IsNullOrWhiteSpace(NotesBox.Text) ? null : NotesBox.Text.Trim();
-        EditedResource.UserTags =
+        var currentFacet = _metadataFacetPolicy.Read(EditedResource);
+        var propertyTags =
             TagsBox.Text
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                .Select(tag => tag.Trim().TrimStart('#'))
                 .ToArray();
+
+        _metadataFacetPolicy.Apply(EditedResource, new ResourceMetadataFacet
+        {
+            TitleOverride = TitleBox.Text,
+            Annotations = NotesBox.Text,
+            Summary = currentFacet.Summary,
+            ConditionTags = currentFacet.ConditionTags,
+            PropertyTags = propertyTags,
+            OriginalFileName = currentFacet.OriginalFileName,
+            MimeType = currentFacet.MimeType,
+            FileSize = currentFacet.FileSize,
+            Source = currentFacet.Source,
+            CreatedAt = currentFacet.CreatedAt,
+            ExtensionMetadata = currentFacet.ExtensionMetadata
+        });
 
         DialogResult = true;
         Close();

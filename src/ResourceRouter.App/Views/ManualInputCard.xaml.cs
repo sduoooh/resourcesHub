@@ -34,7 +34,7 @@ public partial class ManualInputCard : UserControl
         Submitted?.Invoke(this, new ManualInputSubmittedEventArgs
         {
             RawDropData = raw,
-            UserTitle = string.IsNullOrWhiteSpace(TitleTextBox.Text) ? null : TitleTextBox.Text.Trim()
+            TitleOverride = string.IsNullOrWhiteSpace(TitleTextBox.Text) ? null : TitleTextBox.Text.Trim()
         });
 
         BodyTextBox.Clear();

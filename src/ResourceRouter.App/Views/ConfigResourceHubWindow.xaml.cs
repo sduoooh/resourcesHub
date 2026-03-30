@@ -9,6 +9,7 @@ using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using ResourceRouter.Core.Models;
+using ResourceRouter.Infrastructure.Storage;
 
 namespace ResourceRouter.App.Views;
 
@@ -363,8 +364,7 @@ public partial class ConfigResourceHubWindow : Window
 
     private string WriteCurrentJsonToTempFile(ConfigResourceDocument document)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "ResourceRouterConfigHub");
-        Directory.CreateDirectory(dir);
+        var dir = LocalPathProvider.ConfigHubTempDirectory;
 
         var path = Path.Combine(dir, document.SuggestedFileName);
         File.WriteAllText(path, document.JsonContent, Encoding.UTF8);
@@ -373,8 +373,7 @@ public partial class ConfigResourceHubWindow : Window
 
     private string WriteBrowserEditorHtml(ConfigResourceDocument document)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "ResourceRouterConfigHub");
-        Directory.CreateDirectory(dir);
+        var dir = LocalPathProvider.ConfigHubTempDirectory;
 
         var safeId = document.Id.Replace('.', '-');
         var path = Path.Combine(dir, $"config-editor-{safeId}.html");

@@ -7,5 +7,5 @@ public sealed class ManualInputSubmittedEventArgs : EventArgs
 {
     public required RawDropData RawDropData { get; init; }
 
-    public string? UserTitle { get; init; }
+    public string? TitleOverride { get; init; }
 }

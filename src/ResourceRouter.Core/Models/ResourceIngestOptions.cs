@@ -12,7 +12,7 @@ public sealed class ResourceIngestOptions
 
     public string PermissionPresetId { get; init; } = PermissionPreset.PrivatePresetId;
 
-    public string? UserTitle { get; init; }
+    public string? TitleOverride { get; init; }
 
     public PersistencePolicy PersistencePolicy { get; init; } = PersistencePolicy.InPlace;
 }

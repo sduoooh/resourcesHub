@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using ResourceRouter.Infrastructure.Format;
+using ResourceRouter.Infrastructure.Storage;
 
 namespace ResourceRouter.Core.Tests;
 
@@ -56,7 +57,7 @@ public class MimeDetectorTests
 
     private static string CreateTempFileWithoutExtension(byte[] data)
     {
-        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(LocalPathProvider.TestTempDirectory, Guid.NewGuid().ToString("N"));
         File.WriteAllBytes(path, data);
         return path;
     }

@@ -118,7 +118,7 @@ public class PipelineEngineConcurrencyTests
                 SyncPolicy = options.SyncPolicy,
                 ProcessingModel = options.ProcessingModel,
                 PermissionPresetId = options.PermissionPresetId,
-                UserTitle = options.UserTitle
+                TitleOverride = options.TitleOverride
             };
 
             return Task.FromResult(resource);
@@ -154,7 +154,11 @@ public class PipelineEngineConcurrencyTests
             return Task.FromResult(resource);
         }
 
-        public Task<IReadOnlyList<Resource>> ListRecentAsync(int limit, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<Resource>> ListRecentAsync(
+            int limit,
+            IReadOnlyList<string>? tagFilters = null,
+            bool applyConditionVisibility = true,
+            CancellationToken cancellationToken = default)
         {
             var list = _resources.Values
                 .OrderByDescending(r => r.CreatedAt)
@@ -164,7 +168,13 @@ public class PipelineEngineConcurrencyTests
             return Task.FromResult<IReadOnlyList<Resource>>(list);
         }
 
-        public Task<IReadOnlyList<Resource>> SearchAsync(string query, int limit, int offset, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<Resource>> SearchAsync(
+            string query,
+            int limit,
+            int offset,
+            IReadOnlyList<string>? tagFilters = null,
+            bool applyConditionVisibility = true,
+            CancellationToken cancellationToken = default)
         {
             var list = _resources.Values
                 .Skip(offset)
@@ -195,9 +205,21 @@ public class PipelineEngineConcurrencyTests
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<Resource>> QueryAsync(string query, int limit, int offset, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<Resource>> QueryAsync(
+            string query,
+            int limit,
+            int offset,
+            IReadOnlyList<string>? tagFilters = null,
+            bool applyConditionVisibility = true,
+            CancellationToken cancellationToken = default)
         {
-            return _store.SearchAsync(query, limit, offset, cancellationToken);
+            return _store.SearchAsync(
+                query,
+                limit,
+                offset,
+                tagFilters,
+                applyConditionVisibility,
+                cancellationToken);
         }
     }
 

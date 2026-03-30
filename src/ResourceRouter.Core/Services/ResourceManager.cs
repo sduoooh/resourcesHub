@@ -47,9 +47,13 @@ public sealed class ResourceManager
         return _resourceStore.GetByFeatureHashAsync(featureHash, cancellationToken);
     }
 
-    public Task<IReadOnlyList<Resource>> ListRecentAsync(int limit, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<Resource>> ListRecentAsync(
+        int limit,
+        IReadOnlyList<string>? tagFilters = null,
+        bool applyConditionVisibility = true,
+        CancellationToken cancellationToken = default)
     {
-        return _resourceStore.ListRecentAsync(limit, cancellationToken);
+        return _resourceStore.ListRecentAsync(limit, tagFilters, applyConditionVisibility, cancellationToken);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)

@@ -1,16 +1,39 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ResourceRouter.Core.Abstractions;
 using ResourceRouter.Core.Models;
+using ResourceRouter.Core.Services;
 using ResourceRouter.Infrastructure.Format;
 
 namespace ResourceRouter.Infrastructure.Storage;
 
 public sealed class LocalFileStorage : IStorageProvider
 {
+    private delegate Task<string> RawPayloadWriter(
+        LocalFileStorage self,
+        string resourceDir,
+        RawDropData dropData,
+        CancellationToken cancellationToken);
+
+    private static readonly IReadOnlyDictionary<RawDropKind, RawPayloadWriter> RawPayloadWriters =
+        new Dictionary<RawDropKind, RawPayloadWriter>
+        {
+            [RawDropKind.File] = static (self, resourceDir, dropData, cancellationToken) =>
+                self.CopyFileAsync(resourceDir, dropData, cancellationToken),
+            [RawDropKind.Text] = static (self, resourceDir, dropData, cancellationToken) =>
+                self.WriteTextAsync(resourceDir, dropData.Text ?? string.Empty, ".txt", dropData.OriginalSuggestedName, cancellationToken),
+            [RawDropKind.Html] = static (self, resourceDir, dropData, cancellationToken) =>
+                self.WriteTextAsync(resourceDir, dropData.Html ?? string.Empty, ".html", dropData.OriginalSuggestedName, cancellationToken),
+            [RawDropKind.Url] = static (self, resourceDir, dropData, cancellationToken) =>
+                self.WriteUrlAsync(resourceDir, dropData.Url ?? dropData.Text ?? string.Empty, cancellationToken),
+            [RawDropKind.Bitmap] = static (self, resourceDir, dropData, cancellationToken) =>
+                self.WriteBitmapAsync(resourceDir, dropData.BitmapBytes, cancellationToken)
+        };
+
     private readonly IAppLogger? _logger;
 
     public LocalFileStorage(IAppLogger? logger = null)
@@ -32,8 +55,7 @@ public sealed class LocalFileStorage : IStorageProvider
         DateTimeOffset? sourceLastModifiedAt = null;
 
         var finalPolicy = options.PersistencePolicy;
-        // Temporary resources MUST use Unified storage
-        if (dropData.Kind != RawDropKind.File)
+        if (PersistencePolicyRules.ShouldForceUnified(dropData.Kind))
         {
             finalPolicy = PersistencePolicy.Unified;
         }
@@ -106,6 +128,10 @@ public sealed class LocalFileStorage : IStorageProvider
             CreatedAt = DateTimeOffset.UtcNow,
             SourceUri = sourceUri,
             InternalPath = internalPath,
+            RawKind = dropData.Kind,
+            SourceAppHint = dropData.SourceAppHint,
+            CapturedAt = dropData.CapturedAt,
+            OriginalSuggestedName = dropData.OriginalSuggestedName,
             PersistencePolicy = finalPolicy,
             SourceLastModifiedAt = sourceLastModifiedAt,
             OriginalFileName = originalFileName,
@@ -116,22 +142,19 @@ public sealed class LocalFileStorage : IStorageProvider
             SyncPolicy = options.SyncPolicy,
             ProcessingModel = options.ProcessingModel,
             PermissionPresetId = options.PermissionPresetId,
-            UserTitle = options.UserTitle,
+            TitleOverride = options.TitleOverride,
             State = ResourceState.Waiting
         };
     }
 
     private async Task<string> WriteRawPayloadAsync(string resourceDir, RawDropData dropData, CancellationToken cancellationToken)
     {
-        return dropData.Kind switch
+        if (RawPayloadWriters.TryGetValue(dropData.Kind, out var writer))
         {
-            RawDropKind.File => await CopyFileAsync(resourceDir, dropData, cancellationToken).ConfigureAwait(false),
-            RawDropKind.Text => await WriteTextAsync(resourceDir, dropData.Text ?? string.Empty, ".txt", dropData.OriginalSuggestedName, cancellationToken).ConfigureAwait(false),
-            RawDropKind.Html => await WriteTextAsync(resourceDir, dropData.Html ?? string.Empty, ".html", dropData.OriginalSuggestedName, cancellationToken).ConfigureAwait(false),
-            RawDropKind.Url => await WriteUrlAsync(resourceDir, dropData.Url ?? dropData.Text ?? string.Empty, cancellationToken).ConfigureAwait(false),
-            RawDropKind.Bitmap => await WriteBitmapAsync(resourceDir, dropData.BitmapBytes, cancellationToken).ConfigureAwait(false),
-            _ => await WriteTextAsync(resourceDir, dropData.Text ?? string.Empty, ".txt", "content.txt", cancellationToken).ConfigureAwait(false)
-        };
+            return await writer(this, resourceDir, dropData, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await WriteTextAsync(resourceDir, dropData.Text ?? string.Empty, ".txt", "content.txt", cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<string> CopyFileAsync(string resourceDir, RawDropData dropData, CancellationToken cancellationToken)

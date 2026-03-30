@@ -8,7 +8,11 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using System.Threading.Tasks;
+using ResourceRouter.App.State;
+using ResourceRouter.Core.Abstractions;
 using ResourceRouter.Core.Models;
+using ResourceRouter.Core.Services;
 
 namespace ResourceRouter.App.Views;
 
@@ -18,11 +22,15 @@ public partial class CardListPanel : UserControl
     private readonly HashSet<string> _matchedTags = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeTags = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ResourceCard> _cards = new();
+    private readonly HashSet<string> _conditionTagCatalog = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _propertyTagCatalog = new(StringComparer.OrdinalIgnoreCase);
     private string _pendingQuery = string.Empty;
     private ResourceCard? _activeCard;
     private bool _isRefreshingConfigMode;
     private bool _hasVerticalScrollBar;
+    private bool _isAnimatingCards;
     private Func<Resource, IReadOnlyList<ProcessedRouteOption>>? _processedRouteResolver;
+    private IResourceMetadataFacetPolicy _metadataFacetPolicy = new DefaultResourceMetadataFacetPolicy();
 
     private static readonly Brush ActiveTagBackgroundBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x6B, 0x5B));
     private static readonly Brush ActiveTagBorderBrush = new SolidColorBrush(Color.FromRgb(0x7F, 0xD3, 0xBE));
@@ -45,7 +53,7 @@ public partial class CardListPanel : UserControl
         InitializeComponent();
         Loaded += (_, _) => UpdateScrollbarAwareLayout(animate: false);
 
-        _searchDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _searchDebounceTimer = new DispatcherTimer { Interval = AppInteractionDefaults.CardListPanel.SearchDebounce };
         _searchDebounceTimer.Tick += (_, _) =>
         {
             _searchDebounceTimer.Stop();
@@ -58,13 +66,52 @@ public partial class CardListPanel : UserControl
     public event EventHandler<ResourceEventArgs>? ProcessedDragRequested;
     public event EventHandler<ResourceEventArgs>? CollectionDeleteRequested;
     public event EventHandler<ResourceConfigChangedEventArgs>? ResourceConfigChanged;
+    public event EventHandler? InlineInputChanged;
     public event EventHandler<TagToggleEventArgs>? TagToggleRequested;
 
     public bool HasVisibleTags => TagChipsContainer.Visibility == Visibility.Visible;
 
+    public void SetTagCatalog(IReadOnlyCollection<string> conditionTags, IReadOnlyCollection<string> propertyTags)
+    {
+        _conditionTagCatalog.Clear();
+        foreach (var tag in conditionTags)
+        {
+            var normalized = NormalizeTag(tag);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                _conditionTagCatalog.Add(normalized);
+            }
+        }
+
+        _propertyTagCatalog.Clear();
+        foreach (var tag in propertyTags)
+        {
+            var normalized = NormalizeTag(tag);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                _propertyTagCatalog.Add(normalized);
+            }
+        }
+
+        foreach (var card in _cards)
+        {
+            card.SetTagCatalog(_conditionTagCatalog, _propertyTagCatalog);
+        }
+    }
+
     public void SetProcessedRouteResolver(Func<Resource, IReadOnlyList<ProcessedRouteOption>> resolver)
     {
         _processedRouteResolver = resolver;
+    }
+
+    public void SetMetadataFacetPolicy(IResourceMetadataFacetPolicy metadataFacetPolicy)
+    {
+        _metadataFacetPolicy = metadataFacetPolicy ?? throw new ArgumentNullException(nameof(metadataFacetPolicy));
+
+        foreach (var card in _cards)
+        {
+            card.SetMetadataFacetPolicy(_metadataFacetPolicy);
+        }
     }
 
     public void FocusSearchBox(bool selectAll = false)
@@ -118,16 +165,23 @@ public partial class CardListPanel : UserControl
 
         if (cardsHeight <= 1)
         {
-            cardsHeight = 36;
+            cardsHeight = AppInteractionDefaults.CardListPanel.EmptyCardsFallbackHeight;
         }
 
-        const double panelOuterMargin = 16;
-        const double scrollFrame = 2;
-        return panelOuterMargin + searchHeight + tagHeight + cardsHeight + scrollFrame;
+        return AppInteractionDefaults.CardListPanel.PanelOuterMargin
+               + searchHeight
+               + tagHeight
+               + cardsHeight
+               + AppInteractionDefaults.CardListPanel.ScrollFrame;
     }
 
     public void SetResources(IEnumerable<Resource> resources)
     {
+        if (!_isAnimatingCards)
+        {
+            _ = PlayCardsTransitionAsync();
+        }
+
         var existingCards = _cards.ToArray();
         foreach (var existing in existingCards)
         {
@@ -150,11 +204,14 @@ public partial class CardListPanel : UserControl
             {
                 card.SetProcessedRouteOptions(_processedRouteResolver(resource));
             }
+            card.SetTagCatalog(_conditionTagCatalog, _propertyTagCatalog);
+            card.SetMetadataFacetPolicy(_metadataFacetPolicy);
 
             card.RawDragRequested += (_, args) => RawDragRequested?.Invoke(this, args);
             card.ProcessedDragRequested += (_, args) => ProcessedDragRequested?.Invoke(this, args);
             card.CollectionDeleteRequested += (_, args) => CollectionDeleteRequested?.Invoke(this, args);
             card.ConfigChanged += (_, args) => ResourceConfigChanged?.Invoke(this, args);
+            card.TextChanged += (_, _) => InlineInputChanged?.Invoke(this, EventArgs.Empty);
             card.ConfigModeChanged += (_, _) => RefreshConfigModeLock();
             card.InteractionActivated += (_, _) => ActivateCard(card);
             CardsHost.Children.Add(card);
@@ -293,7 +350,11 @@ public partial class CardListPanel : UserControl
     private static bool IsInlineEditorInteraction(DependencyObject? source)
     {
         return FindAncestor<ComboBox>(source) is not null ||
-               FindAncestor<ComboBoxItem>(source) is not null;
+               FindAncestor<ComboBoxItem>(source) is not null ||
+               FindAncestor<ToggleButton>(source) is not null ||
+               FindAncestor<TextBox>(source) is not null ||
+               FindAncestor<Button>(source) is not null ||
+               FindAncestor<ScrollViewer>(source) is not null;
     }
 
     public void SetTagChips(
@@ -443,8 +504,35 @@ public partial class CardListPanel : UserControl
         element.BeginAnimation(property, new ThicknessAnimation
         {
             To = to,
-            Duration = TimeSpan.FromMilliseconds(140),
+            Duration = AppInteractionDefaults.CardListPanel.MarginAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         }, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    private async Task PlayCardsTransitionAsync()
+    {
+        _isAnimatingCards = true;
+        try
+        {
+            CardsScrollViewer.BeginAnimation(OpacityProperty, new DoubleAnimation
+            {
+                To = AppInteractionDefaults.CardListPanel.TransitionFadeDownOpacity,
+                Duration = AppInteractionDefaults.CardListPanel.TransitionFadeDownDuration,
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            }, HandoffBehavior.SnapshotAndReplace);
+
+            await Task.Delay(AppInteractionDefaults.CardListPanel.TransitionFadeDelayMs);
+
+            CardsScrollViewer.BeginAnimation(OpacityProperty, new DoubleAnimation
+            {
+                To = 1,
+                Duration = AppInteractionDefaults.CardListPanel.TransitionFadeUpDuration,
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            }, HandoffBehavior.SnapshotAndReplace);
+        }
+        finally
+        {
+            _isAnimatingCards = false;
+        }
     }
 }

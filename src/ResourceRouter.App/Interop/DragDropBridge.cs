@@ -16,6 +16,27 @@ public static class DragDropBridge
     private const string UrlFormatW = "UniformResourceLocatorW";
     private const string UrlFormat = "UniformResourceLocator";
 
+    private delegate void ExportPayloadWriter(DataObject dataObject, IExportablePayload payload);
+
+    private static readonly IReadOnlyList<ExportPayloadWriter> ExportWriters =
+    [
+        WriteFilePayload,
+        WriteUrlPayload,
+        WriteHtmlPayload,
+        WriteTextPayload,
+        WriteImagePayload
+    ];
+
+    private static readonly IReadOnlyDictionary<RawDropKind, Func<Resource, ExportablePayload>> RawPayloadBuilders =
+        new Dictionary<RawDropKind, Func<Resource, ExportablePayload>>
+        {
+            [RawDropKind.File] = BuildRawFilePayload,
+            [RawDropKind.Text] = BuildRawTextPayload,
+            [RawDropKind.Html] = BuildRawHtmlPayload,
+            [RawDropKind.Url] = BuildRawUrlPayload,
+            [RawDropKind.Bitmap] = BuildRawBitmapPayload
+        };
+
     public readonly record struct ConfigEditorDragPayload(string LaunchFilePath, string EditorUri);
 
     public static IReadOnlyList<RawDropData> Extract(IDataObject dataObject, string? sourceAppHint = null)
@@ -139,53 +160,9 @@ public static class DragDropBridge
     {
         var dataObject = new DataObject();
 
-        if (!string.IsNullOrWhiteSpace(payload.FilePath) && File.Exists(payload.FilePath))
+        foreach (var writer in ExportWriters)
         {
-            var fileList = new StringCollection { payload.FilePath };
-            dataObject.SetFileDropList(fileList);
-
-            if (string.IsNullOrWhiteSpace(payload.TextContent) && 
-                payload.MimeTypeHint?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                try { dataObject.SetText(File.ReadAllText(payload.FilePath), TextDataFormat.UnicodeText); } catch { }
-            }
-
-            if (payload.MemoryBytes == null && 
-                payload.MimeTypeHint?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                try
-                {
-                    var image = new BitmapImage();
-                    image.BeginInit();
-                    image.CacheOption = BitmapCacheOption.OnLoad;
-                    image.UriSource = new Uri(payload.FilePath, UriKind.Absolute);
-                    image.EndInit();
-                    image.Freeze();
-                    dataObject.SetImage(image);
-                }
-                catch { }
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(payload.TextContent))
-        {
-            dataObject.SetText(payload.TextContent, TextDataFormat.UnicodeText);
-        }
-
-        if (payload.MemoryBytes != null && payload.MemoryBytes.Length > 0)
-        {
-            try
-            {
-                using var ms = new MemoryStream(payload.MemoryBytes);
-                var image = new BitmapImage();
-                image.BeginInit();
-                image.CacheOption = BitmapCacheOption.OnLoad;
-                image.StreamSource = ms;
-                image.EndInit();
-                image.Freeze();
-                dataObject.SetImage(image);
-            }
-            catch { }
+            writer(dataObject, payload);
         }
 
         return dataObject;
@@ -195,14 +172,249 @@ public static class DragDropBridge
         Resource resource,
         DragVariant variant)
     {
-        var payload = new ExportablePayload
-        {
-            FilePath = ResolvePath(resource, variant),
-            TextContent = variant == DragVariant.Processed ? resource.ProcessedText : null,
-            MimeTypeHint = resource.MimeType
-        };
+        var payload = variant == DragVariant.Raw
+            ? BuildRawPayload(resource)
+            : BuildProcessedPayload(resource);
 
         return CreateExportData(payload);
+    }
+
+    private static ExportablePayload BuildRawPayload(Resource resource)
+    {
+        if (RawPayloadBuilders.TryGetValue(resource.RawKind, out var builder))
+        {
+            return builder(resource);
+        }
+
+        return BuildRawTextPayload(resource);
+    }
+
+    private static ExportablePayload BuildProcessedPayload(Resource resource)
+    {
+        return new ExportablePayload
+        {
+            FilePath = NullIfMissing(resource.ProcessedFilePath),
+            TextContent = string.IsNullOrWhiteSpace(resource.ProcessedText) ? null : resource.ProcessedText,
+            MimeTypeHint = resource.MimeType
+        };
+    }
+
+    private static ExportablePayload BuildRawFilePayload(Resource resource)
+    {
+        return new ExportablePayload
+        {
+            FilePath = NullIfMissing(resource.GetActivePath()),
+            MimeTypeHint = resource.MimeType
+        };
+    }
+
+    private static ExportablePayload BuildRawTextPayload(Resource resource)
+    {
+        return new ExportablePayload
+        {
+            TextContent = ReadRawTextContent(resource),
+            MimeTypeHint = "text/plain"
+        };
+    }
+
+    private static ExportablePayload BuildRawHtmlPayload(Resource resource)
+    {
+        return new ExportablePayload
+        {
+            TextContent = ReadRawTextContent(resource),
+            MimeTypeHint = "text/html"
+        };
+    }
+
+    private static ExportablePayload BuildRawUrlPayload(Resource resource)
+    {
+        return new ExportablePayload
+        {
+            TextContent = ReadRawUrl(resource),
+            MimeTypeHint = "text/uri-list"
+        };
+    }
+
+    private static ExportablePayload BuildRawBitmapPayload(Resource resource)
+    {
+        return new ExportablePayload
+        {
+            MemoryBytes = ReadRawBytes(resource),
+            MimeTypeHint = resource.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                ? resource.MimeType
+                : "image/png"
+        };
+    }
+
+    private static void WriteFilePayload(DataObject dataObject, IExportablePayload payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload.FilePath) || !File.Exists(payload.FilePath))
+        {
+            return;
+        }
+
+        var fileList = new StringCollection { payload.FilePath };
+        dataObject.SetFileDropList(fileList);
+
+        if (string.IsNullOrWhiteSpace(payload.TextContent) &&
+            payload.MimeTypeHint?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            try
+            {
+                dataObject.SetText(File.ReadAllText(payload.FilePath), TextDataFormat.UnicodeText);
+            }
+            catch
+            {
+            }
+        }
+
+        if (payload.MemoryBytes is null &&
+            payload.MimeTypeHint?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            try
+            {
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.UriSource = new Uri(payload.FilePath, UriKind.Absolute);
+                image.EndInit();
+                image.Freeze();
+                dataObject.SetImage(image);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static void WriteUrlPayload(DataObject dataObject, IExportablePayload payload)
+    {
+        if (!string.Equals(payload.MimeTypeHint, "text/uri-list", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(payload.TextContent))
+        {
+            return;
+        }
+
+        var url = payload.TextContent.Trim();
+        dataObject.SetData(UrlFormatW, url);
+        dataObject.SetData(UrlFormat, url);
+        dataObject.SetText(url, TextDataFormat.UnicodeText);
+    }
+
+    private static void WriteHtmlPayload(DataObject dataObject, IExportablePayload payload)
+    {
+        if (!string.Equals(payload.MimeTypeHint, "text/html", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(payload.TextContent))
+        {
+            return;
+        }
+
+        dataObject.SetData(DataFormats.Html, payload.TextContent);
+    }
+
+    private static void WriteTextPayload(DataObject dataObject, IExportablePayload payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload.TextContent))
+        {
+            return;
+        }
+
+        dataObject.SetText(payload.TextContent, TextDataFormat.UnicodeText);
+    }
+
+    private static void WriteImagePayload(DataObject dataObject, IExportablePayload payload)
+    {
+        if (payload.MemoryBytes is null || payload.MemoryBytes.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            using var ms = new MemoryStream(payload.MemoryBytes);
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.StreamSource = ms;
+            image.EndInit();
+            image.Freeze();
+            dataObject.SetImage(image);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string? ReadRawTextContent(Resource resource)
+    {
+        var path = ResolveRawStoragePath(resource);
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return File.ReadAllText(path, Encoding.UTF8);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadRawUrl(Resource resource)
+    {
+        var raw = ReadRawTextContent(resource);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        foreach (var line in raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (line.StartsWith("URL=", StringComparison.OrdinalIgnoreCase))
+            {
+                return line[4..].Trim();
+            }
+        }
+
+        return raw.Trim();
+    }
+
+    private static byte[]? ReadRawBytes(Resource resource)
+    {
+        var path = ResolveRawStoragePath(resource);
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return File.ReadAllBytes(path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveRawStoragePath(Resource resource)
+    {
+        return resource.InternalPath
+               ?? resource.SourceUri
+               ?? resource.GetActivePath();
+    }
+
+    private static string? NullIfMissing(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        return File.Exists(path) ? path : null;
     }
 
     public static DragDropEffects DoDragOut(
@@ -222,16 +434,6 @@ public static class DragDropBridge
         using var stream = new MemoryStream();
         encoder.Save(stream);
         return stream.ToArray();
-    }
-
-    private static string? ResolvePath(Resource resource, DragVariant variant)
-    {
-        if (variant == DragVariant.Processed && !string.IsNullOrWhiteSpace(resource.ProcessedFilePath))
-        {
-            return resource.ProcessedFilePath!;
-        }
-
-        return resource.GetActivePath();
     }
 
     private static string? ReadUrl(IDataObject dataObject)

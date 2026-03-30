@@ -58,6 +58,8 @@ public sealed class AppRuntime : IDisposable
 
     public PipelineEngine PipelineEngine { get; private set; } = default!;
 
+    public IResourceMetadataFacetPolicy MetadataFacetPolicy { get; private set; } = default!;
+
     public event Func<ResourceConfigChangeHookContext, Task>? OnResourceConfigChanged;
 
     public IAppLogger Logger => _logger;
@@ -92,12 +94,13 @@ public sealed class AppRuntime : IDisposable
         var resourceStore = new SqliteResourceStore();
         var searchIndex = new SearchEngine(resourceStore);
         var resourceManager = new ResourceManager(resourceStore, searchIndex);
+        var metadataFacetPolicy = new DefaultResourceMetadataFacetPolicy();
 
         IAIProvider aiProvider = new NoOpAIProvider();
         ICloudSyncProvider cloudSyncProvider = new NoOpCloudSyncProvider();
         IThumbnailProvider thumbnailProvider = new NoOpThumbnailProvider();
 
-        var capabilityApi = new DefaultProcessingCapabilityApi(() => Config, resourceManager, _logger, _httpClient);
+        var capabilityApi = new DefaultProcessingCapabilityApi(() => Config, resourceManager, _logger, _httpClient, metadataFacetPolicy);
         var processingConfigProvider = new RuntimeProcessingConfigurationProvider(() => Config, capabilityApi);
 
         var storageProvider = new LocalFileStorage(_logger);
@@ -117,6 +120,7 @@ public sealed class AppRuntime : IDisposable
             featureExtractor,
             governanceProvider,
             processingConfigProvider,
+            metadataFacetPolicy,
             _logger,
             maxConcurrentProcessing: 2,
             maxConcurrentSync: 1);
@@ -127,6 +131,7 @@ public sealed class AppRuntime : IDisposable
         SearchIndex = searchIndex;
         ResourceManager = resourceManager;
         PipelineEngine = pipeline;
+        MetadataFacetPolicy = metadataFacetPolicy;
         _cloudSyncProvider = cloudSyncProvider;
 
         await SyncConfigResourcesAsync(config).ConfigureAwait(false);
@@ -304,10 +309,10 @@ public sealed class AppRuntime : IDisposable
                     ProcessedText = doc.JsonContent,
                     ThumbnailPath = existing?.ThumbnailPath,
                     Summary = existing?.Summary,
-                    AutoTags = existing?.AutoTags ?? Array.Empty<string>(),
-                    UserTitle = doc.Title,
-                    UserNotes = existing?.UserNotes,
-                    UserTags = doc.Tags,
+                    ConditionTags = doc.ConditionTags,
+                    TitleOverride = doc.Title,
+                    Annotations = existing?.Annotations,
+                    PropertyTags = doc.PropertyTags,
                     Privacy = PrivacyLevel.Private,
                     SyncPolicy = SyncPolicy.LocalOnly,
                     SyncTargetDevices = Array.Empty<string>(),
@@ -503,7 +508,8 @@ public sealed class AppRuntime : IDisposable
                 Id = FrameworkBasicResourceId,
                 FileName = "framework.basic.json",
                 Title = "框架基础配置",
-                Tags = new[] { "config", "framework", "basic" },
+                ConditionTags = new[] { "config" },
+                PropertyTags = new[] { "framework", "basic" },
                 JsonContent = JsonSerializer.Serialize(basic, ConfigResourceJsonOptions)
             },
             new ConfigResourceDocumentData
@@ -512,7 +518,8 @@ public sealed class AppRuntime : IDisposable
                 Id = FrameworkNativeResourceId,
                 FileName = "framework.native.json",
                 Title = "框架原生能力配置",
-                Tags = new[] { "config", "framework", "native" },
+                ConditionTags = new[] { "config" },
+                PropertyTags = new[] { "framework", "native" },
                 JsonContent = JsonSerializer.Serialize(native, ConfigResourceJsonOptions)
             },
             new ConfigResourceDocumentData
@@ -521,7 +528,8 @@ public sealed class AppRuntime : IDisposable
                 Id = PluginSettingsResourceId,
                 FileName = "plugins.settings.json",
                 Title = "插件配置集合",
-                Tags = new[] { "config", "plugin", "settings" },
+                ConditionTags = new[] { "config" },
+                PropertyTags = new[] { "plugin", "settings" },
                 JsonContent = JsonSerializer.Serialize(plugin, ConfigResourceJsonOptions)
             }
         };
@@ -563,7 +571,9 @@ public sealed class AppRuntime : IDisposable
 
         public required string Title { get; init; }
 
-        public required string[] Tags { get; init; }
+        public required string[] ConditionTags { get; init; }
+
+        public required string[] PropertyTags { get; init; }
 
         public required string JsonContent { get; init; }
     }

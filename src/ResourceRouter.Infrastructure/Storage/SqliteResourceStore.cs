@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
@@ -14,6 +16,8 @@ public sealed class SqliteResourceStore : IResourceStore
 {
     private static readonly string SelectProjection = EmbeddedSql.Load("SelectProjection.sql");
     private static readonly string UpsertSql = EmbeddedSql.Load("UpsertResource.sql");
+    private static readonly string UpsertRawPayloadSql = EmbeddedSql.Load("UpsertRawPayload.sql");
+    private static readonly string UpsertProcessedPayloadSql = EmbeddedSql.Load("UpsertProcessedPayload.sql");
     private static readonly string SearchFtsSql = EmbeddedSql.Load("SearchFts.sql");
     private static readonly string InsertFtsSql = EmbeddedSql.Load("InsertFts.sql");
 
@@ -45,7 +49,9 @@ public sealed class SqliteResourceStore : IResourceStore
     {
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
-        var writeModel = ToWriteModel(resource);
+        var resourceWriteModel = ToResourceWriteModel(resource);
+        var rawPayloadWriteModel = ToRawPayloadWriteModel(resource);
+        var processedPayloadWriteModel = ToProcessedPayloadWriteModel(resource);
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -54,15 +60,44 @@ public sealed class SqliteResourceStore : IResourceStore
         await connection.ExecuteAsync(
                 new CommandDefinition(
                     UpsertSql,
-                    writeModel,
+                    resourceWriteModel,
+                    transaction,
+                    cancellationToken: cancellationToken))
+                .ConfigureAwait(false);
+
+            await connection.ExecuteAsync(
+                new CommandDefinition(
+                    UpsertRawPayloadSql,
+                    rawPayloadWriteModel,
                     transaction,
                     cancellationToken: cancellationToken))
             .ConfigureAwait(false);
 
+            if (processedPayloadWriteModel.HasAnyPayload)
+            {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(
+                    UpsertProcessedPayloadSql,
+                    processedPayloadWriteModel,
+                    transaction,
+                    cancellationToken: cancellationToken))
+                .ConfigureAwait(false);
+            }
+            else
+            {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(
+                    "DELETE FROM resource_processed_payloads WHERE resource_id = @ResourceId;",
+                    new { ResourceId = resourceWriteModel.Id },
+                    transaction,
+                    cancellationToken: cancellationToken))
+                .ConfigureAwait(false);
+            }
+
         await connection.ExecuteAsync(
                 new CommandDefinition(
                     "DELETE FROM fts_resources WHERE resource_id = @Id;",
-                    new { writeModel.Id },
+                    new { resourceWriteModel.Id },
                     transaction,
                     cancellationToken: cancellationToken))
             .ConfigureAwait(false);
@@ -72,9 +107,9 @@ public sealed class SqliteResourceStore : IResourceStore
                     InsertFtsSql,
                     new
                     {
-                        Id = writeModel.Id,
+                        Id = resourceWriteModel.Id,
                         Title = resource.DisplayTitle,
-                        Notes = resource.UserNotes ?? string.Empty,
+                        Notes = resource.Annotations ?? string.Empty,
                         ProcessedText = resource.ProcessedText ?? string.Empty,
                         Summary = resource.Summary ?? string.Empty,
                         Tags = BuildTagContent(resource)
@@ -95,7 +130,7 @@ public sealed class SqliteResourceStore : IResourceStore
 
         var row = await connection.QuerySingleOrDefaultAsync<ResourceRow>(
                 new CommandDefinition(
-                    SelectProjection + " WHERE id = @Id LIMIT 1;",
+                SelectProjection + " WHERE r.id = @Id LIMIT 1;",
                     new { Id = id.ToString("D") },
                     cancellationToken: cancellationToken))
             .ConfigureAwait(false);
@@ -117,7 +152,7 @@ public sealed class SqliteResourceStore : IResourceStore
 
         var row = await connection.QuerySingleOrDefaultAsync<ResourceRow>(
                 new CommandDefinition(
-                    SelectProjection + " WHERE feature_hash = @FeatureHash ORDER BY created_at DESC LIMIT 1;",
+                SelectProjection + " WHERE r.feature_hash = @FeatureHash ORDER BY r.created_at DESC LIMIT 1;",
                     new { FeatureHash = featureHash },
                     cancellationToken: cancellationToken))
             .ConfigureAwait(false);
@@ -125,43 +160,79 @@ public sealed class SqliteResourceStore : IResourceStore
         return row is null ? null : ToResource(row);
     }
 
-    public async Task<IReadOnlyList<Resource>> ListRecentAsync(int limit, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<Resource>> ListRecentAsync(
+        int limit,
+        IReadOnlyList<string>? tagFilters = null,
+        bool applyConditionVisibility = true,
+        CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
+        var parameters = BuildTagQueryParameters(
+            query: null,
+            limit,
+            offset: 0,
+            tagFilters,
+            applyConditionVisibility);
+
+        var sql = SelectProjection +
+                  " WHERE " + BuildTagVisibilityPredicate("r.") +
+                  " ORDER BY r.created_at DESC LIMIT @Limit;";
+
         var rows = await connection.QueryAsync<ResourceRow>(
                 new CommandDefinition(
-                    SelectProjection + " ORDER BY created_at DESC LIMIT @Limit;",
-                    new { Limit = limit },
+                    sql,
+                    parameters,
                     cancellationToken: cancellationToken))
             .ConfigureAwait(false);
 
         return rows.AsList().ConvertAll(ToResource);
     }
 
-    public async Task<IReadOnlyList<Resource>> SearchAsync(string query, int limit, int offset, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<Resource>> SearchAsync(
+        string query,
+        int limit,
+        int offset,
+        IReadOnlyList<string>? tagFilters = null,
+        bool applyConditionVisibility = true,
+        CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
+        var parameters = BuildTagQueryParameters(
+            query,
+            limit,
+            offset,
+            tagFilters,
+            applyConditionVisibility);
+
         CommandDefinition command;
         if (string.IsNullOrWhiteSpace(query))
         {
+            var sql = SelectProjection +
+                      " WHERE " + BuildTagVisibilityPredicate("r.") +
+                      " ORDER BY r.created_at DESC LIMIT @Limit OFFSET @Offset;";
+
             command = new CommandDefinition(
-                SelectProjection + " ORDER BY created_at DESC LIMIT @Limit OFFSET @Offset;",
-                new { Limit = limit, Offset = offset },
+                sql,
+                parameters,
                 cancellationToken: cancellationToken);
         }
         else
         {
+            var sql = SearchFtsSql.Replace(
+                "/*TAG_FILTERS*/",
+                "AND " + BuildTagVisibilityPredicate("r."));
+
             command = new CommandDefinition(
-                SearchFtsSql,
-                new { Query = query, Limit = limit, Offset = offset },
+                sql,
+                parameters,
                 cancellationToken: cancellationToken);
         }
 
@@ -183,6 +254,20 @@ public sealed class SqliteResourceStore : IResourceStore
                     "DELETE FROM fts_resources WHERE resource_id = @Id;",
                     new { Id = idText },
                     cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                "DELETE FROM resource_processed_payloads WHERE resource_id = @Id;",
+                new { Id = idText },
+                cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                "DELETE FROM resource_raw_payloads WHERE resource_id = @Id;",
+                new { Id = idText },
+                cancellationToken: cancellationToken))
             .ConfigureAwait(false);
 
         await connection.ExecuteAsync(
@@ -256,24 +341,24 @@ public sealed class SqliteResourceStore : IResourceStore
     private static Resource ToResource(ResourceRow row)
     {
         var health = row.Health ?? new ResourceHealthStatus();
-        if (IsEmptyHealth(health))
-        {
-            health = new ResourceHealthStatus
-            {
-                LastCheckAt = ParseOptionalDateTimeOffset(row.LastHealthCheckAt),
-                LastCheckPassed = row.LastHealthCheckPassed.HasValue ? row.LastHealthCheckPassed.Value != 0 : null,
-                LastCheckMessage = NullIfEmpty(row.LastHealthCheckMessage)
-            };
-        }
+
+        var rawKindValue = row.RawKind ?? (int)RawDropKind.File;
+        var rawKind = Enum.IsDefined(typeof(RawDropKind), rawKindValue)
+            ? (RawDropKind)rawKindValue
+            : RawDropKind.File;
 
         return new Resource
         {
             Id = Guid.Parse(row.Id),
             CreatedAt = DateTimeOffset.Parse(row.CreatedAt),
+            RawKind = rawKind,
             SourceUri = NullIfEmpty(row.SourceUri),
             InternalPath = NullIfEmpty(row.InternalPath),
             PersistencePolicy = (PersistencePolicy)row.PersistencePolicy,
             SourceLastModifiedAt = ParseOptionalDateTimeOffset(row.SourceLastModifiedAt),
+            SourceAppHint = NullIfEmpty(row.SourceAppHint),
+            CapturedAt = ParseOptionalDateTimeOffset(row.CapturedAt),
+            OriginalSuggestedName = NullIfEmpty(row.OriginalSuggestedName),
             OriginalFileName = row.OriginalFileName,
             MimeType = row.MimeType,
             FileSize = row.FileSize,
@@ -283,10 +368,10 @@ public sealed class SqliteResourceStore : IResourceStore
             ProcessedRouteId = NullIfEmpty(row.ProcessedRouteId),
             ThumbnailPath = NullIfEmpty(row.ThumbnailPath),
             Summary = NullIfEmpty(row.Summary),
-            AutoTags = row.AutoTags ?? Array.Empty<string>(),
-            UserTitle = NullIfEmpty(row.UserTitle),
-            UserNotes = NullIfEmpty(row.UserNotes),
-            UserTags = row.UserTags ?? Array.Empty<string>(),
+            ConditionTags = row.ConditionTags ?? Array.Empty<string>(),
+            TitleOverride = NullIfEmpty(row.TitleOverride),
+            Annotations = NullIfEmpty(row.Annotations),
+            PropertyTags = row.PropertyTags ?? Array.Empty<string>(),
             Privacy = (PrivacyLevel)row.Privacy,
             SyncPolicy = (SyncPolicy)row.SyncPolicy,
             SyncTargetDevices = row.SyncTargetDevices ?? Array.Empty<string>(),
@@ -300,7 +385,7 @@ public sealed class SqliteResourceStore : IResourceStore
         };
     }
 
-    private static ResourceWriteModel ToWriteModel(Resource resource)
+    private static ResourceWriteModel ToResourceWriteModel(Resource resource)
     {
         var health = resource.Health ?? new ResourceHealthStatus();
 
@@ -308,23 +393,17 @@ public sealed class SqliteResourceStore : IResourceStore
         {
             Id = resource.Id.ToString("D"),
             CreatedAt = resource.CreatedAt.ToString("O"),
-            SourceUri = resource.SourceUri ?? string.Empty,
-            InternalPath = resource.InternalPath ?? string.Empty,
             PersistencePolicy = (int)resource.PersistencePolicy,
-            SourceLastModifiedAt = resource.SourceLastModifiedAt?.ToString("O") ?? string.Empty,
             OriginalFileName = resource.OriginalFileName,
             MimeType = resource.MimeType,
             FileSize = resource.FileSize,
             Source = (int)resource.Source,
-            ProcessedFilePath = resource.ProcessedFilePath ?? string.Empty,
-            ProcessedText = resource.ProcessedText ?? string.Empty,
-            ProcessedRouteId = resource.ProcessedRouteId ?? string.Empty,
             ThumbnailPath = resource.ThumbnailPath ?? string.Empty,
             Summary = resource.Summary ?? string.Empty,
-            AutoTags = resource.AutoTags ?? Array.Empty<string>(),
-            UserTitle = resource.UserTitle ?? string.Empty,
-            UserNotes = resource.UserNotes ?? string.Empty,
-            UserTags = resource.UserTags ?? Array.Empty<string>(),
+            ConditionTags = NormalizeTags(resource.ConditionTags),
+            TitleOverride = resource.TitleOverride ?? string.Empty,
+            Annotations = resource.Annotations ?? string.Empty,
+            PropertyTags = NormalizeTags(resource.PropertyTags),
             Privacy = (int)resource.Privacy,
             SyncPolicy = (int)resource.SyncPolicy,
             SyncTargetDevices = resource.SyncTargetDevices ?? Array.Empty<string>(),
@@ -334,10 +413,34 @@ public sealed class SqliteResourceStore : IResourceStore
             WaitingExpiresAt = resource.WaitingExpiresAt?.ToString("O") ?? string.Empty,
             LastError = resource.LastError ?? string.Empty,
             FeatureHash = resource.FeatureHash ?? string.Empty,
-            Health = IsEmptyHealth(health) ? null : health,
-            LastHealthCheckAt = health.LastCheckAt?.ToString("O") ?? string.Empty,
-            LastHealthCheckPassed = health.LastCheckPassed.HasValue ? (health.LastCheckPassed.Value ? 1 : 0) : null,
-            LastHealthCheckMessage = health.LastCheckMessage ?? string.Empty
+            Health = IsEmptyHealth(health) ? null : health
+        };
+    }
+
+    private static RawPayloadWriteModel ToRawPayloadWriteModel(Resource resource)
+    {
+        return new RawPayloadWriteModel
+        {
+            ResourceId = resource.Id.ToString("D"),
+            RawKind = (int)resource.RawKind,
+            SourceUri = resource.SourceUri ?? string.Empty,
+            InternalPath = resource.InternalPath ?? string.Empty,
+            SourceLastModifiedAt = resource.SourceLastModifiedAt?.ToString("O") ?? string.Empty,
+            SourceAppHint = resource.SourceAppHint ?? string.Empty,
+            CapturedAt = resource.CapturedAt?.ToString("O") ?? string.Empty,
+            OriginalSuggestedName = resource.OriginalSuggestedName ?? string.Empty
+        };
+    }
+
+    private static ProcessedPayloadWriteModel ToProcessedPayloadWriteModel(Resource resource)
+    {
+        return new ProcessedPayloadWriteModel
+        {
+            ResourceId = resource.Id.ToString("D"),
+            RouteId = resource.ProcessedRouteId ?? string.Empty,
+            ProcessedFilePath = resource.ProcessedFilePath ?? string.Empty,
+            ProcessedText = resource.ProcessedText ?? string.Empty,
+            UpdatedAt = DateTimeOffset.UtcNow.ToString("O")
         };
     }
 
@@ -355,9 +458,76 @@ public sealed class SqliteResourceStore : IResourceStore
 
     private static string BuildTagContent(Resource resource)
     {
-        var userTags = string.Join(' ', resource.UserTags ?? Array.Empty<string>());
-        var autoTags = string.Join(' ', resource.AutoTags ?? Array.Empty<string>());
-        return userTags + " " + autoTags;
+        var conditionTags = string.Join(' ', NormalizeTags(resource.ConditionTags));
+        var propertyTags = string.Join(' ', NormalizeTags(resource.PropertyTags));
+        return (conditionTags + " " + propertyTags).Trim();
+    }
+
+    private static DynamicParameters BuildTagQueryParameters(
+        string? query,
+        int limit,
+        int offset,
+        IReadOnlyList<string>? tagFilters,
+        bool applyConditionVisibility)
+    {
+        var normalizedFilters = NormalizeTags(tagFilters);
+        var parameters = new DynamicParameters();
+        parameters.Add("Query", query);
+        parameters.Add("Limit", limit);
+        parameters.Add("Offset", offset);
+        parameters.Add("ApplyConditionVisibility", applyConditionVisibility ? 1 : 0);
+        parameters.Add("TagFiltersJson", JsonSerializer.Serialize(normalizedFilters));
+        return parameters;
+    }
+
+    private static string BuildTagVisibilityPredicate(string tableAlias = "")
+    {
+        var conditionColumn = tableAlias + "condition_tags_json";
+        var propertyColumn = tableAlias + "property_tags_json";
+
+        return $@"(
+    @ApplyConditionVisibility = 0
+    OR json_array_length(COALESCE({conditionColumn}, '[]')) = 0
+    OR EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE({conditionColumn}, '[]')) ct
+        INNER JOIN json_each(@TagFiltersJson) tf
+            ON lower(trim(ltrim(CAST(ct.value AS TEXT), '#'))) = lower(trim(ltrim(CAST(tf.value AS TEXT), '#')))
+    )
+)
+AND (
+    json_array_length(@TagFiltersJson) = 0
+    OR NOT EXISTS (
+        SELECT 1
+        FROM json_each(@TagFiltersJson) tf
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE({conditionColumn}, '[]')) ct
+            WHERE lower(trim(ltrim(CAST(ct.value AS TEXT), '#'))) = lower(trim(ltrim(CAST(tf.value AS TEXT), '#')))
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE({propertyColumn}, '[]')) pt
+            WHERE lower(trim(ltrim(CAST(pt.value AS TEXT), '#'))) = lower(trim(ltrim(CAST(tf.value AS TEXT), '#')))
+        )
+    )
+)";
+    }
+
+    private static IReadOnlyList<string> NormalizeTags(IReadOnlyList<string>? tags)
+    {
+        if (tags is null || tags.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return tags
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(static tag => tag.Trim().TrimStart('#'))
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static string? NullIfEmpty(string? value)
@@ -371,13 +541,7 @@ public sealed class SqliteResourceStore : IResourceStore
 
         public string CreatedAt { get; set; } = string.Empty;
 
-        public string SourceUri { get; set; } = string.Empty;
-
-        public string InternalPath { get; set; } = string.Empty;
-
         public int PersistencePolicy { get; set; }
-
-        public string SourceLastModifiedAt { get; set; } = string.Empty;
 
         public string OriginalFileName { get; set; } = string.Empty;
 
@@ -387,23 +551,17 @@ public sealed class SqliteResourceStore : IResourceStore
 
         public int Source { get; set; }
 
-        public string ProcessedFilePath { get; set; } = string.Empty;
-
-        public string ProcessedText { get; set; } = string.Empty;
-
-        public string ProcessedRouteId { get; set; } = string.Empty;
-
         public string ThumbnailPath { get; set; } = string.Empty;
 
         public string Summary { get; set; } = string.Empty;
 
-        public IReadOnlyList<string> AutoTags { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> ConditionTags { get; set; } = Array.Empty<string>();
 
-        public string UserTitle { get; set; } = string.Empty;
+        public string TitleOverride { get; set; } = string.Empty;
 
-        public string UserNotes { get; set; } = string.Empty;
+        public string Annotations { get; set; } = string.Empty;
 
-        public IReadOnlyList<string> UserTags { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> PropertyTags { get; set; } = Array.Empty<string>();
 
         public int Privacy { get; set; }
 
@@ -424,12 +582,43 @@ public sealed class SqliteResourceStore : IResourceStore
         public string FeatureHash { get; set; } = string.Empty;
 
         public ResourceHealthStatus? Health { get; set; }
+    }
 
-        public string LastHealthCheckAt { get; set; } = string.Empty;
+    private sealed class RawPayloadWriteModel
+    {
+        public string ResourceId { get; set; } = string.Empty;
 
-        public int? LastHealthCheckPassed { get; set; }
+        public int RawKind { get; set; }
 
-        public string LastHealthCheckMessage { get; set; } = string.Empty;
+        public string SourceUri { get; set; } = string.Empty;
+
+        public string InternalPath { get; set; } = string.Empty;
+
+        public string SourceLastModifiedAt { get; set; } = string.Empty;
+
+        public string SourceAppHint { get; set; } = string.Empty;
+
+        public string CapturedAt { get; set; } = string.Empty;
+
+        public string OriginalSuggestedName { get; set; } = string.Empty;
+    }
+
+    private sealed class ProcessedPayloadWriteModel
+    {
+        public string ResourceId { get; set; } = string.Empty;
+
+        public string RouteId { get; set; } = string.Empty;
+
+        public string ProcessedFilePath { get; set; } = string.Empty;
+
+        public string ProcessedText { get; set; } = string.Empty;
+
+        public string UpdatedAt { get; set; } = string.Empty;
+
+        public bool HasAnyPayload =>
+            !string.IsNullOrWhiteSpace(RouteId)
+            || !string.IsNullOrWhiteSpace(ProcessedFilePath)
+            || !string.IsNullOrWhiteSpace(ProcessedText);
     }
 
     private sealed class ResourceRow
@@ -438,6 +627,8 @@ public sealed class SqliteResourceStore : IResourceStore
 
         public string CreatedAt { get; set; } = string.Empty;
 
+        public int? RawKind { get; set; }
+
         public string? SourceUri { get; set; }
 
         public string? InternalPath { get; set; }
@@ -445,6 +636,12 @@ public sealed class SqliteResourceStore : IResourceStore
         public int PersistencePolicy { get; set; }
 
         public string? SourceLastModifiedAt { get; set; }
+
+        public string? SourceAppHint { get; set; }
+
+        public string? CapturedAt { get; set; }
+
+        public string? OriginalSuggestedName { get; set; }
 
         public string OriginalFileName { get; set; } = string.Empty;
 
@@ -464,13 +661,13 @@ public sealed class SqliteResourceStore : IResourceStore
 
         public string? Summary { get; set; }
 
-        public IReadOnlyList<string>? AutoTags { get; set; }
+        public IReadOnlyList<string>? ConditionTags { get; set; }
 
-        public string? UserTitle { get; set; }
+        public string? TitleOverride { get; set; }
 
-        public string? UserNotes { get; set; }
+        public string? Annotations { get; set; }
 
-        public IReadOnlyList<string>? UserTags { get; set; }
+        public IReadOnlyList<string>? PropertyTags { get; set; }
 
         public int Privacy { get; set; }
 
@@ -491,11 +688,5 @@ public sealed class SqliteResourceStore : IResourceStore
         public string? FeatureHash { get; set; }
 
         public ResourceHealthStatus? Health { get; set; }
-
-        public string? LastHealthCheckAt { get; set; }
-
-        public long? LastHealthCheckPassed { get; set; }
-
-        public string? LastHealthCheckMessage { get; set; }
     }
 }

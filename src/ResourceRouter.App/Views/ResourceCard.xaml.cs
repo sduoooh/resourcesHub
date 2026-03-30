@@ -4,28 +4,32 @@ using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using ResourceRouter.App.Interop;
+using ResourceRouter.App.State;
+using ResourceRouter.Core.Abstractions;
 using ResourceRouter.Core.Models;
+using ResourceRouter.Core.Services;
 
 namespace ResourceRouter.App.Views;
 
 public partial class ResourceCard : UserControl, INotifyPropertyChanged
 {
-    private const double DragExportTriggerPadding = 56;
+    private const double DragExportTriggerPadding = AppInteractionDefaults.ResourceCard.DragExportTriggerPadding;
     public static readonly DependencyProperty ResourceProperty = DependencyProperty.Register(
         nameof(Resource),
         typeof(Resource),
         typeof(ResourceCard),
         new PropertyMetadata(null, OnResourceChanged));
 
-    private const double DeleteRevealMaxWidth = 106;
-    private const double DeleteRevealCommitWidth = 56;
-    private const double DeleteSwipeHandleWidth = 92;
-    private const double DeleteSwipeMoveThreshold = 6;
+    private const double DeleteRevealMaxWidth = AppInteractionDefaults.ResourceCard.DeleteRevealMaxWidth;
+    private const double DeleteRevealCommitWidth = AppInteractionDefaults.ResourceCard.DeleteRevealCommitWidth;
+    private const double DeleteSwipeHandleWidth = AppInteractionDefaults.ResourceCard.DeleteSwipeHandleWidth;
+    private const double DeleteSwipeMoveThreshold = AppInteractionDefaults.ResourceCard.DeleteSwipeMoveThreshold;
     private static readonly CornerRadius CardCornerCollapsed = new(8);
     private static readonly CornerRadius CardCornerWithInlineConfig = new(8, 8, 0, 0);
     private static readonly CornerRadius ConfigCornerCollapsed = new(10);
@@ -77,9 +81,13 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
     private bool _isDeleteSwipeArmed;
     private bool _isDeleteSwipeMoved;
     private bool _isCardTapCandidate;
+    private bool _newTagAsCondition;
     private Point _deleteSwipeStartPoint;
     private double _deleteRevealStartWidth;
     private double _deleteRevealWidth;
+    private readonly HashSet<string> _conditionTagCatalog = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _propertyTagCatalog = new(StringComparer.OrdinalIgnoreCase);
+    private IResourceMetadataFacetPolicy _metadataFacetPolicy = new DefaultResourceMetadataFacetPolicy();
 
     public ResourceCard()
     {
@@ -121,6 +129,7 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
     public event EventHandler<ResourceEventArgs>? ProcessedDragRequested;
     public event EventHandler<ResourceEventArgs>? CollectionDeleteRequested;
     public event EventHandler<ResourceConfigChangedEventArgs>? ConfigChanged;
+    public event EventHandler? TextChanged;
     public event EventHandler<ResourceConfigModeChangedEventArgs>? ConfigModeChanged;
     public event EventHandler? InteractionActivated;
 
@@ -181,14 +190,46 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
                 return Array.Empty<string>();
             }
 
-            return Resource.UserTags
-                .Concat(Resource.AutoTags)
+            var metadataFacet = _metadataFacetPolicy.Read(Resource);
+
+            return metadataFacet.ConditionTags
+                .Concat(metadataFacet.PropertyTags)
                 .Where(static tag => !string.IsNullOrWhiteSpace(tag))
                 .Select(static tag => $"#{tag.Trim().TrimStart('#')}")
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(8)
                 .ToArray();
         }
+    }
+
+    public void SetTagCatalog(IReadOnlyCollection<string> conditionTags, IReadOnlyCollection<string> propertyTags)
+    {
+        _conditionTagCatalog.Clear();
+        foreach (var tag in conditionTags)
+        {
+            var normalized = NormalizeTagText(tag);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                _conditionTagCatalog.Add(normalized);
+            }
+        }
+
+        _propertyTagCatalog.Clear();
+        foreach (var tag in propertyTags)
+        {
+            var normalized = NormalizeTagText(tag);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                _propertyTagCatalog.Add(normalized);
+            }
+        }
+
+        RefreshInlineTagViews();
+    }
+
+    public void SetMetadataFacetPolicy(IResourceMetadataFacetPolicy metadataFacetPolicy)
+    {
+        _metadataFacetPolicy = metadataFacetPolicy ?? throw new ArgumentNullException(nameof(metadataFacetPolicy));
     }
 
     public void DeactivateInteractions()
@@ -518,7 +559,7 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
             _pointerOutsideSince ??= now;
             var outsideDuration = now - _pointerOutsideSince.Value;
 
-            if (outsideDuration >= TimeSpan.FromMilliseconds(90))
+            if (outsideDuration >= AppInteractionDefaults.ResourceCard.OutsideMainPanelTrigger)
             {
                 StartExportDragOut();
             }
@@ -672,14 +713,14 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
         var animationX = new DoubleAnimation
         {
             To = 0,
-            Duration = TimeSpan.FromMilliseconds(140),
+            Duration = AppInteractionDefaults.ResourceCard.DragResetAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
 
         var animationY = new DoubleAnimation
         {
             To = 0,
-            Duration = TimeSpan.FromMilliseconds(140),
+            Duration = AppInteractionDefaults.ResourceCard.DragResetAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
 
@@ -838,7 +879,7 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
         CardTranslate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation
         {
             To = targetOffset,
-            Duration = TimeSpan.FromMilliseconds(130),
+            Duration = AppInteractionDefaults.ResourceCard.DeleteRevealAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         }, HandoffBehavior.SnapshotAndReplace);
     }
@@ -911,15 +952,7 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
             InlineSyncCombo.SelectedItem = SyncOptions.FirstOrDefault(option => option.Value == Resource.SyncPolicy);
             InlineModelCombo.SelectedItem = ModelOptions.FirstOrDefault(option => option.Value == Resource.ProcessingModel);
             InlinePersistenceCombo.SelectedItem = PersistenceOptions.FirstOrDefault(option => option.Value == Resource.PersistencePolicy);
-
-            if (string.IsNullOrWhiteSpace(Resource.SourceUri))
-            {
-                InlinePersistenceCombo.IsEnabled = false; // "临时资源不可选原地/备份"
-            }
-            else
-            {
-                InlinePersistenceCombo.IsEnabled = true;
-            }
+            InlinePersistenceCombo.IsEnabled = PersistencePolicyRules.CanConfigurePolicy(Resource);
 
             if (InlinePrivacyCombo.SelectedIndex < 0)
             {
@@ -938,6 +971,10 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
                     .FirstOrDefault(pair => pair.Value == ModelType.LocalSmall)?.index ?? 0;
                 InlineModelCombo.SelectedIndex = defaultModelIndex;
             }
+
+            var metadataFacet = _metadataFacetPolicy.Read(Resource);
+            InlineTitleBox.Text = metadataFacet.TitleOverride ?? string.Empty;
+            InlineAnnotationsBox.Text = metadataFacet.Annotations ?? string.Empty;
 
             InlineRouteCombo.IsEnabled = _processedRouteOptions.Count > 0;
             if (_processedRouteOptions.Count == 0)
@@ -958,6 +995,292 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
         {
             _isInlineConfigInitializing = false;
         }
+
+        _newTagAsCondition = false;
+        InlineTagSearchBox.Text = string.Empty;
+        InlineTagInputBox.Text = string.Empty;
+        UpdateTagTypeToggleText();
+        RefreshInlineTagViews();
+    }
+
+    private void OnInlineTagSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isInlineConfigInitializing)
+        {
+            return;
+        }
+
+        RefreshInlineTagViews();
+        TextChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnInlineTagInputTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isInlineConfigInitializing)
+        {
+            return;
+        }
+
+        TextChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnInlineMetadataTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isInlineConfigInitializing)
+        {
+            return;
+        }
+
+        TextChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnInlineTagTypeToggleClick(object sender, RoutedEventArgs e)
+    {
+        _newTagAsCondition = !_newTagAsCondition;
+        UpdateTagTypeToggleText();
+    }
+
+    private void OnInlineTagInputKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        AddNewInlineTag();
+        e.Handled = true;
+    }
+
+    private void OnInlineTagAddClick(object sender, RoutedEventArgs e)
+    {
+        AddNewInlineTag();
+    }
+
+    private void AddNewInlineTag()
+    {
+        if (Resource is null)
+        {
+            return;
+        }
+
+        var normalized = NormalizeTagText(InlineTagInputBox.Text);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        var conditionTags = GetConditionTags();
+        var propertyTags = GetPropertyTags();
+        if (_newTagAsCondition)
+        {
+            propertyTags.Remove(normalized);
+            conditionTags.Add(normalized);
+            _conditionTagCatalog.Add(normalized);
+        }
+        else
+        {
+            conditionTags.Remove(normalized);
+            propertyTags.Add(normalized);
+            _propertyTagCatalog.Add(normalized);
+        }
+
+        ApplyTagChanges(conditionTags, propertyTags);
+        InlineTagInputBox.Text = string.Empty;
+        RefreshInlineTagViews();
+        TextChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnInlineTagChipToggle(object sender, RoutedEventArgs e)
+    {
+        if (Resource is null || sender is not ToggleButton chip || chip.Tag is not string tag)
+        {
+            return;
+        }
+
+        var normalized = NormalizeTagText(tag);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        var conditionTags = GetConditionTags();
+        var propertyTags = GetPropertyTags();
+        var isSelected = chip.IsChecked == true;
+
+        if (isSelected)
+        {
+            var addAsCondition = _conditionTagCatalog.Contains(normalized) && !_propertyTagCatalog.Contains(normalized);
+            if (addAsCondition)
+            {
+                conditionTags.Add(normalized);
+                propertyTags.Remove(normalized);
+            }
+            else
+            {
+                propertyTags.Add(normalized);
+                conditionTags.Remove(normalized);
+            }
+        }
+        else
+        {
+            conditionTags.Remove(normalized);
+            propertyTags.Remove(normalized);
+        }
+
+        ApplyTagChanges(conditionTags, propertyTags);
+        RefreshInlineTagViews();
+    }
+
+    private void ApplyTagChanges(HashSet<string> conditionTags, HashSet<string> propertyTags)
+    {
+        if (Resource is null)
+        {
+            return;
+        }
+
+        var currentFacet = _metadataFacetPolicy.Read(Resource);
+        var changed = _metadataFacetPolicy.Apply(Resource, new ResourceMetadataFacet
+        {
+            TitleOverride = currentFacet.TitleOverride,
+            Annotations = currentFacet.Annotations,
+            Summary = currentFacet.Summary,
+            ConditionTags = conditionTags.OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase).ToArray(),
+            PropertyTags = propertyTags.OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase).ToArray(),
+            OriginalFileName = currentFacet.OriginalFileName,
+            MimeType = currentFacet.MimeType,
+            FileSize = currentFacet.FileSize,
+            Source = currentFacet.Source,
+            CreatedAt = currentFacet.CreatedAt,
+            ExtensionMetadata = currentFacet.ExtensionMetadata
+        });
+
+        if (!changed)
+        {
+            return;
+        }
+
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VisibleTags)));
+
+        ConfigChanged?.Invoke(this, new ResourceConfigChangedEventArgs
+        {
+            Resource = Resource,
+            PreviousPrivacy = Resource.Privacy,
+            PreviousSyncPolicy = Resource.SyncPolicy,
+            PreviousProcessingModel = Resource.ProcessingModel,
+            PreviousPermissionPresetId = Resource.PermissionPresetId,
+            PreviousProcessedRouteId = Resource.ProcessedRouteId,
+            PreviousPersistencePolicy = Resource.PersistencePolicy
+        });
+    }
+
+    private HashSet<string> GetConditionTags()
+    {
+        if (Resource is null)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var metadataFacet = _metadataFacetPolicy.Read(Resource);
+
+        return metadataFacet.ConditionTags
+            .Select(NormalizeTagText)
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private HashSet<string> GetPropertyTags()
+    {
+        if (Resource is null)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var metadataFacet = _metadataFacetPolicy.Read(Resource);
+
+        return metadataFacet.PropertyTags
+            .Select(NormalizeTagText)
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void RefreshInlineTagViews()
+    {
+        if (InlineTagChipsHost is null)
+        {
+            return;
+        }
+
+        if (InlineTagChipsContainer is not null)
+        {
+            InlineTagChipsContainer.Visibility = Visibility.Collapsed;
+        }
+
+        var conditionTags = GetConditionTags();
+        var propertyTags = GetPropertyTags();
+
+        var selectedTags = new HashSet<string>(conditionTags, StringComparer.OrdinalIgnoreCase);
+        selectedTags.UnionWith(propertyTags);
+
+        var keyword = NormalizeTagText(InlineTagSearchBox.Text);
+
+        var displayTags = new HashSet<string>(selectedTags, StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            foreach (var matched in _conditionTagCatalog
+                         .Concat(_propertyTagCatalog)
+                         .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+                         .Where(tag => tag.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
+            {
+                displayTags.Add(matched);
+            }
+        }
+
+        InlineTagChipsHost.Children.Clear();
+        foreach (var tag in displayTags
+                     .OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase)
+                     .Take(96))
+        {
+            InlineTagChipsHost.Children.Add(CreateTagChipToggle(tag, selectedTags.Contains(tag)));
+        }
+
+        if (InlineTagChipsContainer is not null && InlineTagChipsHost.Children.Count > 0)
+        {
+            InlineTagChipsContainer.Visibility = Visibility.Visible;
+        }
+    }
+
+    private ToggleButton CreateTagChipToggle(string tag, bool isSelected)
+    {
+        var chip = new ToggleButton
+        {
+            Tag = tag,
+            Content = $"#{tag}",
+            IsChecked = isSelected,
+            Style = (Style)FindResource("InlineTagChipToggleStyle")
+        };
+
+        chip.Click += OnInlineTagChipToggle;
+        return chip;
+    }
+
+    private void UpdateTagTypeToggleText()
+    {
+        if (InlineTagTypeToggleButton is null)
+        {
+            return;
+        }
+
+        InlineTagTypeToggleButton.Content = _newTagAsCondition ? "条件" : "属性";
+    }
+
+    private static string NormalizeTagText(string? rawTag)
+    {
+        if (string.IsNullOrWhiteSpace(rawTag))
+        {
+            return string.Empty;
+        }
+
+        return rawTag.Trim().TrimStart('#');
     }
 
     private bool TryCommitInlineConfig()
@@ -986,6 +1309,21 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
         var previousPresetId = Resource.PermissionPresetId;
         var previousProcessedRouteId = Resource.ProcessedRouteId;
         var previousPersistencePolicy = Resource.PersistencePolicy;
+        var currentFacet = _metadataFacetPolicy.Read(Resource);
+        var metadataChanged = _metadataFacetPolicy.Apply(Resource, new ResourceMetadataFacet
+        {
+            Summary = currentFacet.Summary,
+            ConditionTags = currentFacet.ConditionTags,
+            PropertyTags = currentFacet.PropertyTags,
+            TitleOverride = InlineTitleBox.Text,
+            Annotations = InlineAnnotationsBox.Text,
+            OriginalFileName = currentFacet.OriginalFileName,
+            MimeType = currentFacet.MimeType,
+            FileSize = currentFacet.FileSize,
+            Source = currentFacet.Source,
+            CreatedAt = currentFacet.CreatedAt,
+            ExtensionMetadata = currentFacet.ExtensionMetadata
+        });
         var nextPresetId = previousPresetId;
         var nextProcessedRouteId = previousProcessedRouteId;
 
@@ -1013,7 +1351,8 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
             previousSyncPolicy == syncPolicy &&
             previousProcessingModel == modelType &&
             previousPersistencePolicy == persistencePolicy &&
-            string.Equals(previousProcessedRouteId, nextProcessedRouteId, StringComparison.OrdinalIgnoreCase);
+            string.Equals(previousProcessedRouteId, nextProcessedRouteId, StringComparison.OrdinalIgnoreCase) &&
+            !metadataChanged;
 
         if (unchanged)
         {
@@ -1248,7 +1587,11 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
     private static bool IsInlineConfigEditorInteraction(DependencyObject? source)
     {
         return FindAncestor<ComboBox>(source) is not null ||
-               FindAncestor<ComboBoxItem>(source) is not null;
+               FindAncestor<ComboBoxItem>(source) is not null ||
+               FindAncestor<ToggleButton>(source) is not null ||
+               FindAncestor<TextBox>(source) is not null ||
+               FindAncestor<Button>(source) is not null ||
+               FindAncestor<ScrollViewer>(source) is not null;
     }
 
     private static T? FindAncestor<T>(DependencyObject? node)
@@ -1272,7 +1615,7 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
         return new DoubleAnimation
         {
             To = to,
-            Duration = TimeSpan.FromMilliseconds(120),
+            Duration = AppInteractionDefaults.ResourceCard.OpacityAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
     }

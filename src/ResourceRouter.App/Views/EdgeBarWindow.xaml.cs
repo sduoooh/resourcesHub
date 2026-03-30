@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -21,25 +22,17 @@ namespace ResourceRouter.App.Views;
 
 public partial class EdgeBarWindow : Window
 {
-    private const double SensorStripWidth = 10;
-    private const double SensorHostWidthCollapsed = 10;
-    private const double SensorHostWidthExpanded = 24;
-    private const double PopupOffsetCollapsed = -10;
-    private const double PopupOffsetExpanded = -7;
-    private const int CardListLimit = 200;
-    private const string ConfigTag = "config";
-    private const double DragStartThreshold = 6;
-    private const double CardListPopupMinHeight = 150;
-    private const double CardListPopupMaxHeight = 640;
-
     private readonly AppRuntime _runtime;
     private readonly ProximityFadeBehavior _proximityFadeBehavior = new();
     private readonly DampedDragBehavior _dampedDragBehavior = new();
+    private readonly EdgeBarLayoutTokens _layoutTokens = new();
+    private readonly EdgeBarLayoutPolicy _layoutPolicy;
     private readonly EdgeBarStateMachine _stateMachine = new();
+    private readonly DropIngressTimingPolicy _dropIngressTimingPolicy = new();
     private readonly DropIngressCoordinator _dropIngressCoordinator = new();
     private readonly System.Threading.SemaphoreSlim _resourceConfigChangeLock = new(1, 1);
-    private readonly DispatcherTimer _dragLeaveCollapseTimer = new() { Interval = TimeSpan.FromMilliseconds(800) };
-    private readonly DispatcherTimer _dropIngressRecoveryTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
+    private readonly DispatcherTimer _dragLeaveCollapseTimer = new() { Interval = AppInteractionDefaults.EdgeBar.DragLeaveCollapseDelay };
+    private readonly DispatcherTimer _dropIngressRecoveryTimer = new() { Interval = AppInteractionDefaults.EdgeBar.DropIngressRecoveryDelay };
     private OleDropTargetRegistration? _oleDropTargetRegistration;
 
     private bool _isMouseDown;
@@ -53,6 +46,7 @@ public partial class EdgeBarWindow : Window
     private DropIngressChannel _pendingDropChannel = DropIngressChannel.Wpf;
     private readonly HashSet<string> _pinnedTags = new(StringComparer.OrdinalIgnoreCase);
     private string _currentCardQuery = string.Empty;
+    private SensorStripMode _sensorStripMode = SensorStripMode.Collapsed;
 
     private enum SensorStripMode
     {
@@ -64,9 +58,13 @@ public partial class EdgeBarWindow : Window
     public EdgeBarWindow(AppRuntime runtime)
     {
         _runtime = runtime;
+        _layoutPolicy = new EdgeBarLayoutPolicy(_layoutTokens);
 
         InitializeComponent();
+        SystemParameters.StaticPropertyChanged += OnSystemParametersChanged;
+        SensorStrip.LostMouseCapture += OnSensorLostMouseCapture;
         CardListControl.SetProcessedRouteResolver(_runtime.GetProcessedRouteOptions);
+        CardListControl.SetMetadataFacetPolicy(_runtime.MetadataFacetPolicy);
         ConfigureWindowPosition();
         BindBehaviors();
         BindStateMachine();
@@ -78,6 +76,7 @@ public partial class EdgeBarWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
         _oleDropTargetRegistration?.Dispose();
         _resourceConfigChangeLock.Dispose();
         _proximityFadeBehavior.Dispose();
@@ -146,11 +145,28 @@ public partial class EdgeBarWindow : Window
 
     private void ConfigureWindowPosition()
     {
-        Width = SensorHostWidthCollapsed;
-        Left = SystemParameters.WorkArea.Right - Width;
-        Top = SystemParameters.WorkArea.Top + (SystemParameters.WorkArea.Height - Height) / 2;
+        var workArea = SystemParameters.WorkArea;
+        Top = _layoutPolicy.ComputeInitialTop(workArea, Height);
         Opacity = 0;
         SetSensorStripPresentation(SensorStripMode.Collapsed);
+    }
+
+    private void OnSystemParametersChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(SystemParameters.WorkArea), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var workArea = SystemParameters.WorkArea;
+        var maxTop = Math.Max(workArea.Top, workArea.Bottom - Height);
+        Top = Math.Clamp(Top, workArea.Top, maxTop);
+
+        var panelOpen = _sensorStripMode != SensorStripMode.Collapsed;
+        var hostHeight = ComputeTargetHostHeight(_sensorStripMode);
+        var hostLayout = _layoutPolicy.ComputeHostLayout(workArea, panelOpen, hostHeight);
+        ApplyHostLayout(hostLayout);
+        RepositionOpenPopups();
     }
 
     private void BindBehaviors()
@@ -158,6 +174,22 @@ public partial class EdgeBarWindow : Window
         _proximityFadeBehavior.Attach(this);
         _proximityFadeBehavior.OpacityChanged += (_, opacity) => _stateMachine.MouseProximityChanged(opacity);
 
+        _dampedDragBehavior.MaxNormalTopProvider = () =>
+        {
+            var workArea = SystemParameters.WorkArea;
+            var panelHeight = 0.0;
+            if (_sensorStripMode == SensorStripMode.DropPanel)
+            {
+                panelHeight = DropPopupBorder.ActualHeight > 0 ? DropPopupBorder.ActualHeight : DropPopupBorder.DesiredSize.Height;
+            }
+            else if (_sensorStripMode == SensorStripMode.MainPanel)
+            {
+                panelHeight = CardListPopupBorder.ActualHeight > 0 ? CardListPopupBorder.ActualHeight : CardListPopupBorder.DesiredSize.Height;
+            }
+            
+            var effectiveMaxHeight = Math.Max(Height, panelHeight);
+            return workArea.Bottom - effectiveMaxHeight;
+        };
         _dampedDragBehavior.Attach(this);
 
         _dropIngressRecoveryTimer.Tick += (_, _) => EnsureDropIngressListenerReady();
@@ -182,7 +214,7 @@ public partial class EdgeBarWindow : Window
             var animation = new DoubleAnimation
             {
                 To = opacity,
-                Duration = TimeSpan.FromMilliseconds(140),
+                Duration = AppInteractionDefaults.EdgeBar.FadeAnimationDuration,
                 EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
             };
 
@@ -192,18 +224,22 @@ public partial class EdgeBarWindow : Window
         {
             SetSensorStripPresentation(SensorStripMode.DropPanel);
             EnsureWindowVisible();
-            DropPopup.IsOpen = true;
-            CardListPopup.IsOpen = false;
-            PlayPopupOpenAnimation(DropPopupBorder, DropPopupScale);
+            OpenPopup(
+                popupToOpen: DropPopup,
+                popupToClose: CardListPopup,
+                popupBorder: DropPopupBorder,
+                popupScale: DropPopupScale);
         };
         _stateMachine.ShowCardListRequested += () =>
         {
             SetSensorStripPresentation(SensorStripMode.MainPanel);
             ActivateForInteractiveInput();
             EnsureWindowVisible();
-            CardListPopup.IsOpen = true;
-            DropPopup.IsOpen = false;
-            PlayPopupOpenAnimation(CardListPopupBorder, CardListPopupScale);
+            OpenPopup(
+                popupToOpen: CardListPopup,
+                popupToClose: DropPopup,
+                popupBorder: CardListPopupBorder,
+                popupScale: CardListPopupScale);
             CardListControl.FocusSearchBox();
             _ = RefreshCardsAsync();
         };
@@ -235,7 +271,7 @@ public partial class EdgeBarWindow : Window
         {
             Dispatcher.Invoke(() =>
             {
-                var dialog = new ConfigDialog(resource) { Owner = this };
+                var dialog = new ConfigDialog(resource, _runtime.MetadataFacetPolicy) { Owner = this };
                 if (dialog.ShowDialog() == true)
                 {
                     _ = _runtime.PipelineEngine.ExecutePipelineAsync(resource);
@@ -249,7 +285,11 @@ public partial class EdgeBarWindow : Window
 
     private void BindUiEvents()
     {
-        LocationChanged += (_, _) => RefreshPopupPlacement();
+        LocationChanged += (_, _) => RepositionOpenPopups();
+        DropPopup.Opened += (_, _) => PositionPopup(DropPopup, DropPopupBorder);
+        CardListPopup.Opened += (_, _) => PositionPopup(CardListPopup, CardListPopupBorder);
+        DropPopupBorder.SizeChanged += (_, _) => RepositionOpenPopups();
+        CardListPopupBorder.SizeChanged += (_, _) => RepositionOpenPopups();
 
         DropPanelControl.PrivateDrop += async (_, args) =>
         {
@@ -269,6 +309,7 @@ public partial class EdgeBarWindow : Window
         CardListControl.TagToggleRequested += async (_, args) => await OnTagToggleRequestedAsync(args);
         CardListControl.RawDragRequested += (_, args) => StartDragOut(args.Resource, DragVariant.Raw);
         CardListControl.ProcessedDragRequested += (_, args) => StartDragOut(args.Resource, DragVariant.Processed);
+        CardListControl.InlineInputChanged += (_, _) => UpdateCardListPopupHeight();
         CardListControl.ResourceConfigChanged += OnCardResourceConfigChanged;
         CardListControl.CollectionDeleteRequested += async (_, args) => await DeleteCollectionRecordAsync(args.Resource);
 
@@ -291,7 +332,7 @@ public partial class EdgeBarWindow : Window
                 SyncPolicy = options.SyncPolicy,
                 ProcessingModel = options.ProcessingModel,
                 Source = options.Source,
-                UserTitle = args.UserTitle
+                TitleOverride = args.TitleOverride
             };
 
             await _runtime.PipelineEngine.IngestResourceAsync(args.RawDropData, options);
@@ -355,20 +396,33 @@ public partial class EdgeBarWindow : Window
     private async Task RefreshCardsAsync()
     {
         var (searchText, queryTagFilters) = ParseSearchQuery(_currentCardQuery);
-        var resources = string.IsNullOrWhiteSpace(searchText)
-            ? await _runtime.ResourceManager.ListRecentAsync(CardListLimit)
-            : await _runtime.SearchIndex.QueryAsync(searchText, limit: CardListLimit, offset: 0);
-
-        var tagUniverseResources = await _runtime.ResourceManager.ListRecentAsync(CardListLimit);
-        var existingTags = CollectExistingTags(tagUniverseResources);
-        _pinnedTags.RemoveWhere(tag => !existingTags.Contains(tag));
-
         var effectiveTagFilters = BuildEffectiveTagFilters(queryTagFilters);
-        var visibleResources = ApplyTagVisibilityFilter(resources, effectiveTagFilters);
+
+        var resources = string.IsNullOrWhiteSpace(searchText)
+            ? await _runtime.ResourceManager.ListRecentAsync(
+                AppInteractionDefaults.EdgeBar.CardListLimit,
+                effectiveTagFilters,
+                applyConditionVisibility: true)
+            : await _runtime.SearchIndex.QueryAsync(
+                searchText,
+                limit: AppInteractionDefaults.EdgeBar.CardListLimit,
+                offset: 0,
+                tagFilters: effectiveTagFilters,
+                applyConditionVisibility: true);
+
+        var tagUniverseResources = await _runtime.ResourceManager.ListRecentAsync(
+            AppInteractionDefaults.EdgeBar.CardListLimit,
+            tagFilters: Array.Empty<string>(),
+            applyConditionVisibility: false);
+        var (conditionTags, propertyTags) = CollectExistingTags(tagUniverseResources);
+        var existingTags = new HashSet<string>(conditionTags, StringComparer.OrdinalIgnoreCase);
+        existingTags.UnionWith(propertyTags);
+        _pinnedTags.RemoveWhere(tag => !existingTags.Contains(tag));
 
         var displayTags = BuildDisplayTags(existingTags, _pinnedTags, queryTagFilters);
 
-        CardListControl.SetResources(visibleResources);
+        CardListControl.SetResources(resources);
+        CardListControl.SetTagCatalog(conditionTags, propertyTags);
         CardListControl.SetTagChips(
             displayTags,
             _pinnedTags,
@@ -435,45 +489,24 @@ public partial class EdgeBarWindow : Window
         return false;
     }
 
-    private static IReadOnlyList<Resource> ApplyTagVisibilityFilter(IReadOnlyList<Resource> resources, IReadOnlyList<string> tagFilters)
+    private Point GetCursorScreenPositionDip()
     {
-        var filters = new HashSet<string>(tagFilters, StringComparer.OrdinalIgnoreCase);
-        var showConfigResources = filters.Any(filter => string.Equals(filter, ConfigTag, StringComparison.OrdinalIgnoreCase));
-
-        var query = resources.Where(resource => showConfigResources || !HasTagExact(resource, ConfigTag));
-        if (filters.Count > 0)
+        var cursorPhys = Win32Helpers.GetCursorScreenPosition();
+        var source = PresentationSource.FromVisual(this);
+        if (source?.CompositionTarget != null)
         {
-            query = query.Where(resource => filters.All(filter => HasTagContains(resource, filter)));
+            return source.CompositionTarget.TransformFromDevice.Transform(cursorPhys);
         }
-
-        return query.ToArray();
-    }
-
-    private static bool HasTagExact(Resource resource, string tag)
-    {
-        return resource.UserTags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase)) ||
-            resource.AutoTags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static bool HasTagContains(Resource resource, string tagFilter)
-    {
-        var filter = tagFilter.Trim().TrimStart('#');
-        if (string.IsNullOrWhiteSpace(filter))
-        {
-            return true;
-        }
-
-        return resource.UserTags
-            .Concat(resource.AutoTags)
-            .Any(tag => !string.IsNullOrWhiteSpace(tag) &&
-                tag.Trim().TrimStart('#').Contains(filter, StringComparison.OrdinalIgnoreCase));
+        return cursorPhys;
     }
 
     private void OnSensorMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        EnsureWindowVisible();
+        _stateMachine.PinVisibility();
         _isMouseDown = true;
         _isDragMoveStarted = false;
-        _mouseDownScreenPoint = Win32Helpers.GetCursorScreenPosition();
+        _mouseDownScreenPoint = GetCursorScreenPositionDip();
         EnsureDropIngressListenerReady();
         Mouse.Capture(SensorStrip);
         e.Handled = true;
@@ -486,11 +519,12 @@ public partial class EdgeBarWindow : Window
             return;
         }
 
-        var cursor = Win32Helpers.GetCursorScreenPosition();
+        var cursor = GetCursorScreenPositionDip();
         if (!_isDragMoveStarted)
         {
-            var deltaY = Math.Abs(cursor.Y - _mouseDownScreenPoint.Y);
-            if (deltaY < DragStartThreshold)
+            var deltaX = cursor.X - _mouseDownScreenPoint.X;
+            var deltaY = cursor.Y - _mouseDownScreenPoint.Y;
+            if (Math.Sqrt(deltaX * deltaX + deltaY * deltaY) < AppInteractionDefaults.EdgeBar.DragStartThresholdDip)
             {
                 return;
             }
@@ -501,7 +535,7 @@ public partial class EdgeBarWindow : Window
         }
 
         _dampedDragBehavior.UpdateTarget(cursor);
-        RefreshPopupPlacement();
+        RepositionOpenPopups();
         e.Handled = true;
     }
 
@@ -512,14 +546,15 @@ public partial class EdgeBarWindow : Window
             return;
         }
 
+        var wasDragging = _isDragMoveStarted;
         _isMouseDown = false;
-        Mouse.Capture(null);
 
-        if (_isDragMoveStarted)
+        // Perform logic before Mouse.Capture(null) to avoid LostMouseCapture wiping flags
+        if (wasDragging)
         {
             _dampedDragBehavior.EndDrag();
             _stateMachine.EndDragMove();
-            RefreshPopupPlacement();
+            RepositionOpenPopups();
         }
         else
         {
@@ -527,8 +562,22 @@ public partial class EdgeBarWindow : Window
         }
 
         _isDragMoveStarted = false;
+        _stateMachine.UnpinVisibility();
 
+        Mouse.Capture(null);
         e.Handled = true;
+    }
+
+    private void OnSensorLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (!_isMouseDown && !_isDragMoveStarted)
+        {
+            return;
+        }
+
+        _isMouseDown = false;
+        _isDragMoveStarted = false;
+        _stateMachine.UnpinVisibility();
     }
 
     private void OnSensorMouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -675,7 +724,7 @@ public partial class EdgeBarWindow : Window
         var animation = new DoubleAnimation
         {
             To = 1,
-            Duration = TimeSpan.FromMilliseconds(120),
+            Duration = AppInteractionDefaults.EdgeBar.RevealAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
 
@@ -700,25 +749,110 @@ public partial class EdgeBarWindow : Window
         {
             From = 0,
             To = 1,
-            Duration = TimeSpan.FromMilliseconds(150),
+            Duration = AppInteractionDefaults.EdgeBar.PopupOpenAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         }, HandoffBehavior.SnapshotAndReplace);
 
         popupScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation
         {
-            From = 0.96,
+            From = AppInteractionDefaults.EdgeBar.PopupOpenScaleFrom,
             To = 1,
-            Duration = TimeSpan.FromMilliseconds(150),
+            Duration = AppInteractionDefaults.EdgeBar.PopupOpenAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         }, HandoffBehavior.SnapshotAndReplace);
 
         popupScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation
         {
-            From = 0.96,
+            From = AppInteractionDefaults.EdgeBar.PopupOpenScaleFrom,
             To = 1,
-            Duration = TimeSpan.FromMilliseconds(150),
+            Duration = AppInteractionDefaults.EdgeBar.PopupOpenAnimationDuration,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         }, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    private void OpenPopup(
+        Popup popupToOpen,
+        Popup popupToClose,
+        FrameworkElement popupBorder,
+        ScaleTransform popupScale)
+    {
+        popupToClose.IsOpen = false;
+        PositionPopup(popupToOpen, popupBorder);
+        popupToOpen.IsOpen = true;
+
+        // The first open can happen before all visual measurements settle.
+        // Reposition once on the dispatcher after layout to avoid first-frame drift.
+        _ = Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!popupToOpen.IsOpen)
+            {
+                return;
+            }
+
+            PositionPopup(popupToOpen, popupBorder);
+        }), DispatcherPriority.Loaded);
+
+        PlayPopupOpenAnimation(popupBorder, popupScale);
+    }
+
+    private void RepositionOpenPopups()
+    {
+        if (DropPopup.IsOpen)
+        {
+            PositionPopup(DropPopup, DropPopupBorder);
+        }
+
+        if (CardListPopup.IsOpen)
+        {
+            PositionPopup(CardListPopup, CardListPopupBorder);
+        }
+    }
+
+    private void PositionPopup(Popup popup, FrameworkElement popupBorder)
+    {
+        RootGrid.UpdateLayout();
+        popupBorder.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var popupWidth = popupBorder.ActualWidth > 0 ? popupBorder.ActualWidth : popupBorder.DesiredSize.Width;
+        var popupHeight = popupBorder.ActualHeight > 0 ? popupBorder.ActualHeight : popupBorder.DesiredSize.Height;
+        if (popupWidth <= 0 || popupHeight <= 0)
+        {
+            return;
+        }
+
+        var sensorBoundsInWindow = GetStableSensorBoundsInWindow();
+
+        var absolutePos = _layoutPolicy.ComputePopupAbsolutePosition(
+            SystemParameters.WorkArea,
+            new Rect(Left, Top, Width, Height),
+            sensorBoundsInWindow,
+            new Size(popupWidth, popupHeight));
+
+        if (Math.Abs(popup.HorizontalOffset - absolutePos.X) < 0.1 && Math.Abs(popup.VerticalOffset - absolutePos.Y) < 0.1)
+        {
+            popup.HorizontalOffset = absolutePos.X + 0.1;
+            popup.VerticalOffset = absolutePos.Y + 0.1;
+        }
+
+        popup.HorizontalOffset = absolutePos.X;
+        popup.VerticalOffset = absolutePos.Y;
+    }
+
+    private Rect GetStableSensorBoundsInWindow()
+    {
+        var panelOpen = _sensorStripMode != SensorStripMode.Collapsed;
+        var hostHeight = ComputeTargetHostHeight(_sensorStripMode);
+        var hostLayout = _layoutPolicy.ComputeHostLayout(SystemParameters.WorkArea, panelOpen, hostHeight);
+
+        var sensorWidth = hostLayout.SensorStripWidthDip;
+        var sensorLeft = hostLayout.SensorAlignment == HorizontalAlignment.Center
+            ? Math.Max(0, (hostLayout.HostWidthDip - sensorWidth) * 0.5)
+            : Math.Max(0, hostLayout.HostWidthDip - sensorWidth);
+
+        var sensorHeight = SensorStrip.ActualHeight > 0
+            ? SensorStrip.ActualHeight
+            : (RootGrid.ActualHeight > 0 ? RootGrid.ActualHeight : Height);
+
+        return new Rect(sensorLeft, 0, sensorWidth, sensorHeight);
     }
 
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
@@ -773,12 +907,14 @@ public partial class EdgeBarWindow : Window
 
     private void StartDragOut(Resource resource, DragVariant variant)
     {
-        SuppressDropIngress(TimeSpan.FromMilliseconds(1800));
+        SuppressDropIngress(_dropIngressTimingPolicy.SuppressDuringDragOut);
         _isDragOutInProgress = true;
 
         try
         {
-            if (variant == DragVariant.Processed && string.IsNullOrWhiteSpace(resource.ProcessedFilePath))
+            if (variant == DragVariant.Processed
+                && string.IsNullOrWhiteSpace(resource.ProcessedFilePath)
+                && string.IsNullOrWhiteSpace(resource.ProcessedText))
             {
                 return;
             }
@@ -796,7 +932,7 @@ public partial class EdgeBarWindow : Window
         finally
         {
             _isDragOutInProgress = false;
-            SuppressDropIngress(TimeSpan.FromMilliseconds(700));
+            SuppressDropIngress(_dropIngressTimingPolicy.SuppressAfterDragOut);
         }
     }
 
@@ -810,7 +946,7 @@ public partial class EdgeBarWindow : Window
             {
                 var pt = CardListPopupBorder.PointToScreen(new Point(0, 0));
                 var r = new Rect(pt, new Size(CardListPopupBorder.ActualWidth, CardListPopupBorder.ActualHeight));
-                r.Inflate(56, 56);
+                r.Inflate(AppInteractionDefaults.EdgeBar.CursorInsideInflateDip, AppInteractionDefaults.EdgeBar.CursorInsideInflateDip);
                 if (r.Contains(screen)) return true;
             }
             catch { }
@@ -822,7 +958,7 @@ public partial class EdgeBarWindow : Window
             {
                 var pt = DropPopupBorder.PointToScreen(new Point(0, 0));
                 var r = new Rect(pt, new Size(DropPopupBorder.ActualWidth, DropPopupBorder.ActualHeight));
-                r.Inflate(56, 56);
+                r.Inflate(AppInteractionDefaults.EdgeBar.CursorInsideInflateDip, AppInteractionDefaults.EdgeBar.CursorInsideInflateDip);
                 if (r.Contains(screen)) return true;
             }
             catch { }
@@ -832,7 +968,7 @@ public partial class EdgeBarWindow : Window
         {
             var topLeft = PointToScreen(new Point(0, 0));
             var rect = new Rect(topLeft, new Size(ActualWidth, ActualHeight));
-            rect.Inflate(56, 56);
+            rect.Inflate(AppInteractionDefaults.EdgeBar.CursorInsideInflateDip, AppInteractionDefaults.EdgeBar.CursorInsideInflateDip);
             return rect.Contains(screen);
         }
         catch
@@ -920,23 +1056,33 @@ public partial class EdgeBarWindow : Window
         return effectiveTags.ToArray();
     }
 
-    private static HashSet<string> CollectExistingTags(IReadOnlyList<Resource> resources)
+    private static (HashSet<string> ConditionTags, HashSet<string> PropertyTags) CollectExistingTags(IReadOnlyList<Resource> resources)
     {
-        var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var conditionTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var propertyTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var resource in resources)
         {
-            foreach (var tag in resource.UserTags.Concat(resource.AutoTags))
+            foreach (var tag in resource.ConditionTags)
             {
                 var normalized = tag?.Trim().TrimStart('#');
                 if (!string.IsNullOrWhiteSpace(normalized))
                 {
-                    tags.Add(normalized);
+                    conditionTags.Add(normalized);
+                }
+            }
+
+            foreach (var tag in resource.PropertyTags)
+            {
+                var normalized = tag?.Trim().TrimStart('#');
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    propertyTags.Add(normalized);
                 }
             }
         }
 
-        return tags;
+        return (conditionTags, propertyTags);
     }
 
     private static IReadOnlyList<string> BuildDisplayTags(
@@ -980,63 +1126,60 @@ public partial class EdgeBarWindow : Window
         var desiredHeight = CardListControl.GetDesiredPopupHeight();
         if (double.IsNaN(desiredHeight) || double.IsInfinity(desiredHeight) || desiredHeight <= 0)
         {
-            desiredHeight = CardListPopupMinHeight;
+            desiredHeight = AppInteractionDefaults.EdgeBar.CardListPopupContentMinHeightDip;
         }
 
-        CardListPopupBorder.Height = Math.Clamp(Math.Ceiling(desiredHeight), CardListPopupMinHeight, CardListPopupMaxHeight);
+        var targetHeight = Math.Clamp(
+            Math.Ceiling(desiredHeight),
+            AppInteractionDefaults.EdgeBar.CardListPopupContentMinHeightDip,
+            AppInteractionDefaults.EdgeBar.CardListPopupMaxHeightDip);
+        CardListPopupBorder.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation
+        {
+            To = targetHeight,
+            Duration = AppInteractionDefaults.EdgeBar.FadeAnimationDuration,
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        }, HandoffBehavior.SnapshotAndReplace);
     }
 
     private void SetSensorStripPresentation(SensorStripMode mode)
     {
+        _sensorStripMode = mode;
         var panelOpen = mode != SensorStripMode.Collapsed;
-        var targetHostWidth = panelOpen ? SensorHostWidthExpanded : SensorHostWidthCollapsed;
-        ResizeHostWidthKeepingRightEdge(targetHostWidth);
+        var hostHeight = ComputeTargetHostHeight(mode);
+        var hostLayout = _layoutPolicy.ComputeHostLayout(SystemParameters.WorkArea, panelOpen, hostHeight);
+        ApplyHostLayout(hostLayout);
 
-        SensorStrip.HorizontalAlignment = mode == SensorStripMode.MainPanel
-            ? HorizontalAlignment.Center
-            : HorizontalAlignment.Right;
-        SensorStrip.Width = SensorStripWidth;
-        SensorStrip.Opacity = panelOpen ? 1.0 : 0.86;
-
-        var popupOffset = panelOpen ? PopupOffsetExpanded : PopupOffsetCollapsed;
-        DropPopup.HorizontalOffset = popupOffset;
-        CardListPopup.HorizontalOffset = popupOffset;
-
-        RefreshPopupPlacement();
+        RepositionOpenPopups();
     }
 
-    private void ResizeHostWidthKeepingRightEdge(double targetWidth)
+    private double ComputeTargetHostHeight(SensorStripMode mode)
     {
-        if (Math.Abs(Width - targetWidth) < 0.01)
+        if (mode == SensorStripMode.Collapsed)
+            return AppInteractionDefaults.EdgeBar.WindowHeightDip;
+
+        if (mode == SensorStripMode.MainPanel)
+            return AppInteractionDefaults.EdgeBar.CardListPopupVisualMinHeightDip / 3.0;
+
+        DropPopupBorder.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var h = DropPopupBorder.DesiredSize.Height;
+        return (h > 0 ? h : 200) / 2.0;
+    }
+
+    private void ApplyHostLayout(EdgeBarHostLayout hostLayout)
+    {
+        Width = hostLayout.HostWidthDip;
+        Left = hostLayout.HostLeftDip;
+        SensorStrip.HorizontalAlignment = hostLayout.SensorAlignment;
+        SensorStrip.Width = hostLayout.SensorStripWidthDip;
+        SensorStrip.Opacity = hostLayout.SensorOpacity;
+
+        var anim = new DoubleAnimation
         {
-            return;
-        }
-
-        var right = Left + Width;
-        Width = targetWidth;
-        Left = right - Width;
-    }
-
-    private void RefreshPopupPlacement()
-    {
-        RefreshPopupPlacement(DropPopup);
-        RefreshPopupPlacement(CardListPopup);
-    }
-
-    private static void RefreshPopupPlacement(Popup popup)
-    {
-        if (!popup.IsOpen)
-        {
-            return;
-        }
-
-        var horizontalOffset = popup.HorizontalOffset;
-        popup.HorizontalOffset = horizontalOffset + 0.1;
-        popup.HorizontalOffset = horizontalOffset;
-
-        var verticalOffset = popup.VerticalOffset;
-        popup.VerticalOffset = verticalOffset + 0.1;
-        popup.VerticalOffset = verticalOffset;
+            To = hostLayout.HostHeightDip,
+            Duration = AppInteractionDefaults.EdgeBar.PopupOpenAnimationDuration,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        BeginAnimation(HeightProperty, anim, HandoffBehavior.SnapshotAndReplace);
     }
 
     private bool IsDropIngressSuppressed()

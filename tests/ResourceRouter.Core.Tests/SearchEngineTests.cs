@@ -62,12 +62,22 @@ public class SearchEngineTests
             return Task.FromResult<Resource?>(null);
         }
 
-        public Task<IReadOnlyList<Resource>> ListRecentAsync(int limit, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<Resource>> ListRecentAsync(
+            int limit,
+            IReadOnlyList<string>? tagFilters = null,
+            bool applyConditionVisibility = true,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<Resource>>(Array.Empty<Resource>());
         }
 
-        public Task<IReadOnlyList<Resource>> SearchAsync(string query, int limit, int offset, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<Resource>> SearchAsync(
+            string query,
+            int limit,
+            int offset,
+            IReadOnlyList<string>? tagFilters = null,
+            bool applyConditionVisibility = true,
+            CancellationToken cancellationToken = default)
         {
             LastQuery = query;
             return Task.FromResult<IReadOnlyList<Resource>>(Array.Empty<Resource>());

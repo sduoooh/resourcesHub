@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Media;
+using ResourceRouter.App.State;
 
 namespace ResourceRouter.App.Views;
 
@@ -152,10 +153,10 @@ public partial class DropPanel : UserControl
     {
         _currentFocus = focus;
 
-        var publicOpacity = focus == ZoneFocus.Public ? 0.92 : 0.16;
-        var privateOpacity = focus == ZoneFocus.Private ? 0.92 : 0.16;
-        var publicScale = focus == ZoneFocus.Public ? 1.04 : 1.0;
-        var privateScale = focus == ZoneFocus.Private ? 1.04 : 1.0;
+        var publicOpacity = focus == ZoneFocus.Public ? AppInteractionDefaults.DropPanel.FocusOpacity : AppInteractionDefaults.DropPanel.IdleOpacity;
+        var privateOpacity = focus == ZoneFocus.Private ? AppInteractionDefaults.DropPanel.FocusOpacity : AppInteractionDefaults.DropPanel.IdleOpacity;
+        var publicScale = focus == ZoneFocus.Public ? AppInteractionDefaults.DropPanel.FocusScale : AppInteractionDefaults.DropPanel.IdleScale;
+        var privateScale = focus == ZoneFocus.Private ? AppInteractionDefaults.DropPanel.FocusScale : AppInteractionDefaults.DropPanel.IdleScale;
 
         AnimateDouble(PublicFocusHalo, UIElement.OpacityProperty, publicOpacity, animated);
         AnimateDouble(PrivateFocusHalo, UIElement.OpacityProperty, privateOpacity, animated);
@@ -169,7 +170,7 @@ public partial class DropPanel : UserControl
 
     private static void AnimateDouble(DependencyObject target, DependencyProperty property, double to, bool animated)
     {
-        var duration = animated ? TimeSpan.FromMilliseconds(120) : TimeSpan.Zero;
+        var duration = animated ? AppInteractionDefaults.DropPanel.FocusAnimationDuration : TimeSpan.Zero;
         var animation = new DoubleAnimation
         {
             To = to,
