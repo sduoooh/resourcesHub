@@ -2,6 +2,7 @@
              x:Name="Root"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:ResourceRouter.Core.Models;assembly=ResourceRouter.Core"
              PreviewMouseMove="OnRootPreviewMouseMove"
              PreviewMouseLeftButtonUp="OnRootPreviewMouseLeftButtonUp"
              MinHeight="92"
@@ -304,6 +305,7 @@
                                 </ToggleButton>
 
                                 <ContentPresenter x:Name="ExpandSite"
+                                                  ContentSource="Content"
                                                   Margin="0,6,0,0"
                                                   Visibility="Collapsed"
                                                   Opacity="0"
@@ -325,7 +327,8 @@
                                                              Storyboard.TargetProperty="Opacity"
                                                              From="0"
                                                              To="1"
-                                                             Duration="0:0:0.14" />
+                                                             Duration="0:0:0.14"
+                                                             FillBehavior="Stop" />
                                             <DoubleAnimation Storyboard.TargetName="ExpandSite"
                                                              Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
                                                              From="0.98"
@@ -338,16 +341,6 @@
                             <Trigger Property="IsExpanded" Value="False">
                                 <Setter TargetName="ExpandSite" Property="Visibility" Value="Collapsed" />
                                 <Setter TargetName="ExpandSite" Property="Opacity" Value="0" />
-                                <Trigger.EnterActions>
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="ExpandSite"
-                                                             Storyboard.TargetProperty="Opacity"
-                                                             To="0"
-                                                             Duration="0:0:0.1" />
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </Trigger.EnterActions>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -600,11 +593,12 @@
                                 <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="同步" />
                                 <ComboBox x:Name="InlineSyncCombo" Grid.Row="2" Grid.Column="1" Height="26" Margin="0,0,0,6" Style="{StaticResource InlineComboStyle}" SelectionChanged="OnInlineOptionChanged" DropDownClosed="OnInlineOptionDropDownClosed" />
 
-                                <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="标题" />
+                                <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Center" Foreground="#FF1F2A36" Text="别名" />
                                 <TextBox x:Name="InlineTitleBox"
                                          Grid.Row="3"
                                          Grid.Column="1"
                                          Margin="0,0,0,6"
+                                         MaxLength="{x:Static models:ResourceFieldLimits.AliasMaxLength}"
                                          Style="{StaticResource InlineTagTextBoxStyle}"
                                          TextChanged="OnInlineMetadataTextChanged" />
 
@@ -617,6 +611,7 @@
                                          AcceptsReturn="True"
                                          TextWrapping="Wrap"
                                          VerticalScrollBarVisibility="Auto"
+                                         Style="{StaticResource InlineTagTextBoxStyle}"
                                          TextChanged="OnInlineMetadataTextChanged" />
 
                                 <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,8,6" VerticalAlignment="Top" Foreground="#FF1F2A36" Text="标签" />
@@ -642,6 +637,7 @@
                                          Grid.Column="0"
                                          Grid.ColumnSpan="2"
                                          Margin="0,0,0,6"
+                                         MaxLength="{x:Static models:ResourceFieldLimits.TagMaxLength}"
                                          Style="{StaticResource InlineTagTextBoxStyle}"
                                          ToolTip="搜索已有标签"
                                          TextChanged="OnInlineTagSearchTextChanged" />
@@ -664,6 +660,7 @@
                                     <TextBox x:Name="InlineTagInputBox"
                                              Grid.Column="1"
                                              Margin="0,0,6,0"
+                                             MaxLength="{x:Static models:ResourceFieldLimits.TagMaxLength}"
                                              Style="{StaticResource InlineTagTextBoxStyle}"
                                              VerticalContentAlignment="Center"
                                              TextChanged="OnInlineTagInputTextChanged"
@@ -681,7 +678,7 @@
                     </Expander>
 
                     <Expander Header="处理机制"
-                              IsExpanded="True"
+                              IsExpanded="False"
                               Style="{StaticResource InlineSectionExpanderStyle}">
                         <Border Background="#FFE2E8EF"
                                 BorderBrush="#FFA9B6C3"
@@ -708,7 +705,7 @@
                     </Expander>
 
                     <Expander Header="存储机制"
-                              IsExpanded="True"
+                              IsExpanded="False"
                               Style="{StaticResource InlineSectionExpanderStyle}"
                               Margin="0">
                         <Border Background="#FFE2E8EF"

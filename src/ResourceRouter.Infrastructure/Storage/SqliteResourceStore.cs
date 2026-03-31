@@ -16,8 +16,6 @@ public sealed class SqliteResourceStore : IResourceStore
 {
     private static readonly string SelectProjection = EmbeddedSql.Load("SelectProjection.sql");
     private static readonly string UpsertSql = EmbeddedSql.Load("UpsertResource.sql");
-    private static readonly string UpsertRawPayloadSql = EmbeddedSql.Load("UpsertRawPayload.sql");
-    private static readonly string UpsertProcessedPayloadSql = EmbeddedSql.Load("UpsertProcessedPayload.sql");
     private static readonly string SearchFtsSql = EmbeddedSql.Load("SearchFts.sql");
     private static readonly string InsertFtsSql = EmbeddedSql.Load("InsertFts.sql");
 
@@ -50,8 +48,6 @@ public sealed class SqliteResourceStore : IResourceStore
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
         var resourceWriteModel = ToResourceWriteModel(resource);
-        var rawPayloadWriteModel = ToRawPayloadWriteModel(resource);
-        var processedPayloadWriteModel = ToProcessedPayloadWriteModel(resource);
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -64,35 +60,6 @@ public sealed class SqliteResourceStore : IResourceStore
                     transaction,
                     cancellationToken: cancellationToken))
                 .ConfigureAwait(false);
-
-            await connection.ExecuteAsync(
-                new CommandDefinition(
-                    UpsertRawPayloadSql,
-                    rawPayloadWriteModel,
-                    transaction,
-                    cancellationToken: cancellationToken))
-            .ConfigureAwait(false);
-
-            if (processedPayloadWriteModel.HasAnyPayload)
-            {
-                await connection.ExecuteAsync(
-                    new CommandDefinition(
-                    UpsertProcessedPayloadSql,
-                    processedPayloadWriteModel,
-                    transaction,
-                    cancellationToken: cancellationToken))
-                .ConfigureAwait(false);
-            }
-            else
-            {
-                await connection.ExecuteAsync(
-                    new CommandDefinition(
-                    "DELETE FROM resource_processed_payloads WHERE resource_id = @ResourceId;",
-                    new { ResourceId = resourceWriteModel.Id },
-                    transaction,
-                    cancellationToken: cancellationToken))
-                .ConfigureAwait(false);
-            }
 
         await connection.ExecuteAsync(
                 new CommandDefinition(
@@ -257,20 +224,6 @@ public sealed class SqliteResourceStore : IResourceStore
             .ConfigureAwait(false);
 
         await connection.ExecuteAsync(
-            new CommandDefinition(
-                "DELETE FROM resource_processed_payloads WHERE resource_id = @Id;",
-                new { Id = idText },
-                cancellationToken: cancellationToken))
-            .ConfigureAwait(false);
-
-        await connection.ExecuteAsync(
-            new CommandDefinition(
-                "DELETE FROM resource_raw_payloads WHERE resource_id = @Id;",
-                new { Id = idText },
-                cancellationToken: cancellationToken))
-            .ConfigureAwait(false);
-
-        await connection.ExecuteAsync(
                 new CommandDefinition(
                     "DELETE FROM resources WHERE id = @Id;",
                     new { Id = idText },
@@ -342,7 +295,7 @@ public sealed class SqliteResourceStore : IResourceStore
     {
         var health = row.Health ?? new ResourceHealthStatus();
 
-        var rawKindValue = row.RawKind ?? (int)RawDropKind.File;
+        var rawKindValue = row.RawKind;
         var rawKind = Enum.IsDefined(typeof(RawDropKind), rawKindValue)
             ? (RawDropKind)rawKindValue
             : RawDropKind.File;
@@ -393,11 +346,21 @@ public sealed class SqliteResourceStore : IResourceStore
         {
             Id = resource.Id.ToString("D"),
             CreatedAt = resource.CreatedAt.ToString("O"),
+            RawKind = (int)resource.RawKind,
+            SourceUri = resource.SourceUri ?? string.Empty,
+            InternalPath = resource.InternalPath ?? string.Empty,
             PersistencePolicy = (int)resource.PersistencePolicy,
+            SourceLastModifiedAt = resource.SourceLastModifiedAt?.ToString("O") ?? string.Empty,
+            SourceAppHint = resource.SourceAppHint ?? string.Empty,
+            CapturedAt = resource.CapturedAt?.ToString("O") ?? string.Empty,
+            OriginalSuggestedName = resource.OriginalSuggestedName ?? string.Empty,
             OriginalFileName = resource.OriginalFileName,
             MimeType = resource.MimeType,
             FileSize = resource.FileSize,
             Source = (int)resource.Source,
+            ProcessedRouteId = resource.ProcessedRouteId ?? string.Empty,
+            ProcessedFilePath = resource.ProcessedFilePath ?? string.Empty,
+            ProcessedText = resource.ProcessedText ?? string.Empty,
             ThumbnailPath = resource.ThumbnailPath ?? string.Empty,
             Summary = resource.Summary ?? string.Empty,
             ConditionTags = NormalizeTags(resource.ConditionTags),
@@ -414,33 +377,6 @@ public sealed class SqliteResourceStore : IResourceStore
             LastError = resource.LastError ?? string.Empty,
             FeatureHash = resource.FeatureHash ?? string.Empty,
             Health = IsEmptyHealth(health) ? null : health
-        };
-    }
-
-    private static RawPayloadWriteModel ToRawPayloadWriteModel(Resource resource)
-    {
-        return new RawPayloadWriteModel
-        {
-            ResourceId = resource.Id.ToString("D"),
-            RawKind = (int)resource.RawKind,
-            SourceUri = resource.SourceUri ?? string.Empty,
-            InternalPath = resource.InternalPath ?? string.Empty,
-            SourceLastModifiedAt = resource.SourceLastModifiedAt?.ToString("O") ?? string.Empty,
-            SourceAppHint = resource.SourceAppHint ?? string.Empty,
-            CapturedAt = resource.CapturedAt?.ToString("O") ?? string.Empty,
-            OriginalSuggestedName = resource.OriginalSuggestedName ?? string.Empty
-        };
-    }
-
-    private static ProcessedPayloadWriteModel ToProcessedPayloadWriteModel(Resource resource)
-    {
-        return new ProcessedPayloadWriteModel
-        {
-            ResourceId = resource.Id.ToString("D"),
-            RouteId = resource.ProcessedRouteId ?? string.Empty,
-            ProcessedFilePath = resource.ProcessedFilePath ?? string.Empty,
-            ProcessedText = resource.ProcessedText ?? string.Empty,
-            UpdatedAt = DateTimeOffset.UtcNow.ToString("O")
         };
     }
 
@@ -522,9 +458,9 @@ AND (
         }
 
         return tags
+            .Select(ResourceTagRules.Normalize)
             .Where(static tag => !string.IsNullOrWhiteSpace(tag))
-            .Select(static tag => tag.Trim().TrimStart('#'))
-            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(static tag => tag!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -541,7 +477,21 @@ AND (
 
         public string CreatedAt { get; set; } = string.Empty;
 
+        public int RawKind { get; set; }
+
+        public string SourceUri { get; set; } = string.Empty;
+
+        public string InternalPath { get; set; } = string.Empty;
+
         public int PersistencePolicy { get; set; }
+
+        public string SourceLastModifiedAt { get; set; } = string.Empty;
+
+        public string SourceAppHint { get; set; } = string.Empty;
+
+        public string CapturedAt { get; set; } = string.Empty;
+
+        public string OriginalSuggestedName { get; set; } = string.Empty;
 
         public string OriginalFileName { get; set; } = string.Empty;
 
@@ -550,6 +500,12 @@ AND (
         public long FileSize { get; set; }
 
         public int Source { get; set; }
+
+        public string ProcessedRouteId { get; set; } = string.Empty;
+
+        public string ProcessedFilePath { get; set; } = string.Empty;
+
+        public string ProcessedText { get; set; } = string.Empty;
 
         public string ThumbnailPath { get; set; } = string.Empty;
 
@@ -584,50 +540,13 @@ AND (
         public ResourceHealthStatus? Health { get; set; }
     }
 
-    private sealed class RawPayloadWriteModel
-    {
-        public string ResourceId { get; set; } = string.Empty;
-
-        public int RawKind { get; set; }
-
-        public string SourceUri { get; set; } = string.Empty;
-
-        public string InternalPath { get; set; } = string.Empty;
-
-        public string SourceLastModifiedAt { get; set; } = string.Empty;
-
-        public string SourceAppHint { get; set; } = string.Empty;
-
-        public string CapturedAt { get; set; } = string.Empty;
-
-        public string OriginalSuggestedName { get; set; } = string.Empty;
-    }
-
-    private sealed class ProcessedPayloadWriteModel
-    {
-        public string ResourceId { get; set; } = string.Empty;
-
-        public string RouteId { get; set; } = string.Empty;
-
-        public string ProcessedFilePath { get; set; } = string.Empty;
-
-        public string ProcessedText { get; set; } = string.Empty;
-
-        public string UpdatedAt { get; set; } = string.Empty;
-
-        public bool HasAnyPayload =>
-            !string.IsNullOrWhiteSpace(RouteId)
-            || !string.IsNullOrWhiteSpace(ProcessedFilePath)
-            || !string.IsNullOrWhiteSpace(ProcessedText);
-    }
-
     private sealed class ResourceRow
     {
         public string Id { get; set; } = string.Empty;
 
         public string CreatedAt { get; set; } = string.Empty;
 
-        public int? RawKind { get; set; }
+        public int RawKind { get; set; }
 
         public string? SourceUri { get; set; }
 

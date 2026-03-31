@@ -29,7 +29,7 @@ public sealed class PermissionPreset
                 DisplayName = "隐私",
                 Privacy = PrivacyLevel.Private,
                 SyncPolicy = SyncPolicy.LocalOnly,
-                ProcessingModel = ModelType.LocalSmall,
+                ProcessingModel = ModelType.None,
                 AllowCloudSync = false
             },
             [PublicPresetId] = new()

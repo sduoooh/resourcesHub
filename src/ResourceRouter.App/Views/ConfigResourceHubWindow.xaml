@@ -68,8 +68,7 @@
 
                 <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0" HorizontalAlignment="Left">
                     <Button Width="100" Height="30" Margin="0,0,8,0" Click="OnSaveCurrentClick">保存当前</Button>
-                    <Button Width="120" Height="30" Margin="0,0,8,0" Click="OnDragJsonClick">拖出 JSON 文件</Button>
-                    <Button Width="140" Height="30" Click="OnDragBrowserEditorClick">拖出浏览器编辑页</Button>
+                    <Button Width="120" Height="30" Click="OnDragJsonClick">拖出 JSON 文件</Button>
                 </StackPanel>
             </Grid>
         </Border>

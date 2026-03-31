@@ -11,29 +11,25 @@ namespace ResourceRouter.Core.Services;
 public sealed class ResourceManager
 {
     private readonly IResourceStore _resourceStore;
-    private readonly ISearchIndex _searchIndex;
 
     public event EventHandler<ResourceCreatedEventArgs>? OnResourceCreated;
     public event EventHandler<ResourceUpdatedEventArgs>? OnResourceUpdated;
     public event EventHandler<ResourceDeletedEventArgs>? OnResourceDeleted;
 
-    public ResourceManager(IResourceStore resourceStore, ISearchIndex searchIndex)
+    public ResourceManager(IResourceStore resourceStore)
     {
         _resourceStore = resourceStore;
-        _searchIndex = searchIndex;
     }
 
     public async Task AddAsync(Resource resource, CancellationToken cancellationToken = default)
     {
         await _resourceStore.UpsertAsync(resource, cancellationToken).ConfigureAwait(false);
-        await _searchIndex.IndexAsync(resource, cancellationToken).ConfigureAwait(false);
         OnResourceCreated?.Invoke(this, new ResourceCreatedEventArgs { Resource = resource });
     }
 
     public async Task UpdateAsync(Resource resource, CancellationToken cancellationToken = default)
     {
         await _resourceStore.UpsertAsync(resource, cancellationToken).ConfigureAwait(false);
-        await _searchIndex.IndexAsync(resource, cancellationToken).ConfigureAwait(false);
         OnResourceUpdated?.Invoke(this, new ResourceUpdatedEventArgs { Resource = resource });
     }
 

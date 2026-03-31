@@ -192,3 +192,4 @@ public class MarkdownFormatConverter : IFormatConverter
 - 几个附加机制仅做抽象接口预留作为占位，待实现。
 - 在`UI`的美观和交互上还需继续打磨。
 - 云或它端的同步价值和场景需要考虑，对应形态需要进行调整。
+- 优化整体架构，去除冗杂的`if-else`结构和硬编码逻辑。

@@ -102,7 +102,6 @@ public partial class EdgeBarWindow : Window
                 }
 
                 EnsureWindowVisible();
-                _stateMachine.DragEnter();
             }),
             onDragLeave: () => Dispatcher.Invoke(() =>
             {
@@ -177,6 +176,7 @@ public partial class EdgeBarWindow : Window
         _dampedDragBehavior.MaxNormalTopProvider = () =>
         {
             var workArea = SystemParameters.WorkArea;
+
             var panelHeight = 0.0;
             if (_sensorStripMode == SensorStripMode.DropPanel)
             {
@@ -245,11 +245,16 @@ public partial class EdgeBarWindow : Window
         };
         _stateMachine.CollapseAllRequested += () =>
         {
+            var wasCardListOpen = CardListPopup.IsOpen;
             SetSensorStripPresentation(SensorStripMode.Collapsed);
             DropPopup.IsOpen = false;
             CardListPopup.IsOpen = false;
             ClearPendingDrops();
             CardListControl.CollapseCardInteractions();
+            if (wasCardListOpen)
+            {
+                ResetMainPanelState();
+            }
         };
     }
 
@@ -396,7 +401,7 @@ public partial class EdgeBarWindow : Window
     private async Task RefreshCardsAsync()
     {
         var (searchText, queryTagFilters) = ParseSearchQuery(_currentCardQuery);
-        var effectiveTagFilters = BuildEffectiveTagFilters(queryTagFilters);
+        var effectiveTagFilters = BuildEffectiveTagFilters();
 
         var resources = string.IsNullOrWhiteSpace(searchText)
             ? await _runtime.ResourceManager.ListRecentAsync(
@@ -448,13 +453,12 @@ public partial class EdgeBarWindow : Window
 
         foreach (var token in tokens)
         {
+            searchTerms.Add(token);
+
             if (TryExtractTagFilter(token, out var tag))
             {
                 tagFilters.Add(tag);
-                continue;
             }
-
-            searchTerms.Add(token);
         }
 
         return (string.Join(' ', searchTerms), tagFilters.ToArray());
@@ -471,9 +475,10 @@ public partial class EdgeBarWindow : Window
         if (token.StartsWith("tag:", StringComparison.OrdinalIgnoreCase))
         {
             var value = token[4..].Trim();
-            if (!string.IsNullOrWhiteSpace(value))
+            var normalized = ResourceTagRules.Normalize(value);
+            if (!string.IsNullOrWhiteSpace(normalized))
             {
-                tag = value;
+                tag = normalized;
                 return true;
             }
 
@@ -482,8 +487,12 @@ public partial class EdgeBarWindow : Window
 
         if (token.StartsWith('#') && token.Length > 1)
         {
-            tag = token[1..].Trim();
-            return !string.IsNullOrWhiteSpace(tag);
+            var normalized = ResourceTagRules.Normalize(token[1..]);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                tag = normalized;
+                return true;
+            }
         }
 
         return false;
@@ -503,6 +512,10 @@ public partial class EdgeBarWindow : Window
     private void OnSensorMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         EnsureWindowVisible();
+        var currentTop = Top;
+        BeginAnimation(TopProperty, null);
+        Top = currentTop;
+        _dampedDragBehavior.SyncToWindowTop();
         _stateMachine.PinVisibility();
         _isMouseDown = true;
         _isDragMoveStarted = false;
@@ -554,6 +567,13 @@ public partial class EdgeBarWindow : Window
         {
             _dampedDragBehavior.EndDrag();
             _stateMachine.EndDragMove();
+
+            if (_sensorStripMode != SensorStripMode.Collapsed)
+            {
+                var alignHeight = ComputeTopClampHeight(_sensorStripMode, ComputeTargetHostHeight(_sensorStripMode));
+                EnsureTopFitsExpandedPanel(alignHeight, animate: true);
+            }
+
             RepositionOpenPopups();
         }
         else
@@ -622,7 +642,6 @@ public partial class EdgeBarWindow : Window
 
         _dragLeaveCollapseTimer.Stop();
         EnsureWindowVisible();
-        _stateMachine.DragEnter();
         e.Effects = DragDropEffects.Copy;
         e.Handled = true;
     }
@@ -787,6 +806,12 @@ public partial class EdgeBarWindow : Window
             if (!popupToOpen.IsOpen)
             {
                 return;
+            }
+
+            var popupHeight = popupBorder.ActualHeight > 0 ? popupBorder.ActualHeight : popupBorder.DesiredSize.Height;
+            if (_sensorStripMode != SensorStripMode.Collapsed && popupHeight > 0)
+            {
+                EnsureTopFitsExpandedPanel(popupHeight, animate: true);
             }
 
             PositionPopup(popupToOpen, popupBorder);
@@ -986,7 +1011,7 @@ public partial class EdgeBarWindow : Window
 
     private async Task OnTagToggleRequestedAsync(TagToggleEventArgs args)
     {
-        var tag = args.Tag.Trim().TrimStart('#');
+        var tag = ResourceTagRules.Normalize(args.Tag);
         if (string.IsNullOrWhiteSpace(tag))
         {
             return;
@@ -1041,19 +1066,14 @@ public partial class EdgeBarWindow : Window
         }
     }
 
-    private IReadOnlyList<string> BuildEffectiveTagFilters(IReadOnlyList<string> queryTagFilters)
+    private IReadOnlyList<string> BuildEffectiveTagFilters()
     {
-        var effectiveTags = new HashSet<string>(_pinnedTags, StringComparer.OrdinalIgnoreCase);
-        foreach (var queryTag in queryTagFilters)
-        {
-            var normalized = queryTag.Trim().TrimStart('#');
-            if (!string.IsNullOrWhiteSpace(normalized))
-            {
-                effectiveTags.Add(normalized);
-            }
-        }
-
-        return effectiveTags.ToArray();
+        return _pinnedTags
+            .Select(ResourceTagRules.Normalize)
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(static tag => tag!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static (HashSet<string> ConditionTags, HashSet<string> PropertyTags) CollectExistingTags(IReadOnlyList<Resource> resources)
@@ -1065,7 +1085,7 @@ public partial class EdgeBarWindow : Window
         {
             foreach (var tag in resource.ConditionTags)
             {
-                var normalized = tag?.Trim().TrimStart('#');
+                var normalized = ResourceTagRules.Normalize(tag);
                 if (!string.IsNullOrWhiteSpace(normalized))
                 {
                     conditionTags.Add(normalized);
@@ -1074,7 +1094,7 @@ public partial class EdgeBarWindow : Window
 
             foreach (var tag in resource.PropertyTags)
             {
-                var normalized = tag?.Trim().TrimStart('#');
+                var normalized = ResourceTagRules.Normalize(tag);
                 if (!string.IsNullOrWhiteSpace(normalized))
                 {
                     propertyTags.Add(normalized);
@@ -1103,7 +1123,7 @@ public partial class EdgeBarWindow : Window
 
         foreach (var tag in queryTags)
         {
-            var normalized = tag.Trim().TrimStart('#');
+            var normalized = ResourceTagRules.Normalize(tag);
             if (string.IsNullOrWhiteSpace(normalized))
             {
                 continue;
@@ -1133,6 +1153,13 @@ public partial class EdgeBarWindow : Window
             Math.Ceiling(desiredHeight),
             AppInteractionDefaults.EdgeBar.CardListPopupContentMinHeightDip,
             AppInteractionDefaults.EdgeBar.CardListPopupMaxHeightDip);
+
+        if (_sensorStripMode == SensorStripMode.MainPanel)
+        {
+            EnsureTopFitsExpandedPanel(targetHeight, animate: true);
+            RepositionOpenPopups();
+        }
+
         CardListPopupBorder.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation
         {
             To = targetHeight,
@@ -1145,11 +1172,100 @@ public partial class EdgeBarWindow : Window
     {
         _sensorStripMode = mode;
         var panelOpen = mode != SensorStripMode.Collapsed;
+        var workArea = SystemParameters.WorkArea;
         var hostHeight = ComputeTargetHostHeight(mode);
-        var hostLayout = _layoutPolicy.ComputeHostLayout(SystemParameters.WorkArea, panelOpen, hostHeight);
+        var hostLayout = _layoutPolicy.ComputeHostLayout(workArea, panelOpen, hostHeight);
+
+        var clampHeight = ComputeTopClampHeight(mode, hostLayout.HostHeightDip);
+        if (panelOpen)
+        {
+            EnsureTopFitsExpandedPanel(clampHeight, animate: true);
+        }
+        else
+        {
+            var currentTop = Top;
+            BeginAnimation(TopProperty, null);
+            Top = currentTop;
+            var maxCollapsedTop = Math.Max(workArea.Top, workArea.Bottom - hostLayout.HostHeightDip);
+            Top = Math.Clamp(Top, workArea.Top, maxCollapsedTop);
+            _dampedDragBehavior.SyncToWindowTop();
+        }
+
         ApplyHostLayout(hostLayout);
 
         RepositionOpenPopups();
+    }
+
+    private void EnsureTopFitsExpandedPanel(double panelHeight, bool animate)
+    {
+        var workArea = SystemParameters.WorkArea;
+        var maxTop = Math.Max(workArea.Top, workArea.Bottom - panelHeight);
+        if (Top <= maxTop)
+        {
+            return;
+        }
+
+        if (!animate)
+        {
+            BeginAnimation(TopProperty, null);
+            Top = maxTop;
+            _dampedDragBehavior.SyncToWindowTop();
+            return;
+        }
+
+        var animation = new DoubleAnimation
+        {
+            To = maxTop,
+            Duration = AppInteractionDefaults.EdgeBar.PopupOpenAnimationDuration,
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        };
+
+        animation.Completed += (_, _) =>
+        {
+            Top = maxTop;
+            _dampedDragBehavior.SyncToWindowTop();
+        };
+
+        BeginAnimation(TopProperty, animation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    private void ResetMainPanelState()
+    {
+        _currentCardQuery = string.Empty;
+        _pinnedTags.Clear();
+        CardListControl.ResetPanelState();
+    }
+
+    private double ComputeTopClampHeight(SensorStripMode mode, double hostHeight)
+    {
+        if (mode == SensorStripMode.MainPanel)
+        {
+            var desiredPopupHeight = CardListControl.GetDesiredPopupHeight();
+            if (double.IsNaN(desiredPopupHeight) || double.IsInfinity(desiredPopupHeight) || desiredPopupHeight <= 0)
+            {
+                desiredPopupHeight = AppInteractionDefaults.EdgeBar.CardListPopupMaxHeightDip;
+            }
+
+            var popupHeight = Math.Clamp(
+                Math.Ceiling(desiredPopupHeight),
+                AppInteractionDefaults.EdgeBar.CardListPopupContentMinHeightDip,
+                AppInteractionDefaults.EdgeBar.CardListPopupMaxHeightDip);
+
+            return Math.Max(hostHeight, popupHeight);
+        }
+
+        if (mode == SensorStripMode.DropPanel)
+        {
+            DropPopupBorder.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            var popupHeight = DropPopupBorder.DesiredSize.Height;
+            if (popupHeight > 0)
+            {
+                return Math.Max(hostHeight, popupHeight);
+            }
+        }
+
+        return hostHeight;
     }
 
     private double ComputeTargetHostHeight(SensorStripMode mode)

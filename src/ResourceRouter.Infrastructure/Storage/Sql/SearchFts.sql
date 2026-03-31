@@ -1,21 +1,21 @@
 SELECT
     r.id AS Id,
     r.created_at AS CreatedAt,
-    rp.raw_kind AS RawKind,
-    rp.source_uri AS SourceUri,
-    rp.internal_path AS InternalPath,
+    r.raw_kind AS RawKind,
+    r.source_uri AS SourceUri,
+    r.internal_path AS InternalPath,
     r.persistence_policy AS PersistencePolicy,
-    rp.source_last_modified_at AS SourceLastModifiedAt,
-    rp.source_app_hint AS SourceAppHint,
-    rp.captured_at AS CapturedAt,
-    rp.original_suggested_name AS OriginalSuggestedName,
+    r.source_last_modified_at AS SourceLastModifiedAt,
+    r.source_app_hint AS SourceAppHint,
+    r.captured_at AS CapturedAt,
+    r.original_suggested_name AS OriginalSuggestedName,
     r.original_file_name AS OriginalFileName,
     r.mime_type AS MimeType,
     r.file_size AS FileSize,
     r.source AS Source,
-    pp.processed_file_path AS ProcessedFilePath,
-    pp.processed_text AS ProcessedText,
-    pp.route_id AS ProcessedRouteId,
+    r.processed_file_path AS ProcessedFilePath,
+    r.processed_text AS ProcessedText,
+    r.processed_route_id AS ProcessedRouteId,
     r.thumbnail_path AS ThumbnailPath,
     r.summary AS Summary,
     r.condition_tags_json AS ConditionTags,
@@ -34,8 +34,6 @@ SELECT
     r.health_json AS Health
 FROM fts_resources f
 INNER JOIN resources r ON r.id = f.resource_id
-LEFT JOIN resource_raw_payloads rp ON rp.resource_id = r.id
-LEFT JOIN resource_processed_payloads pp ON pp.resource_id = r.id
 WHERE fts_resources MATCH @Query
 /*TAG_FILTERS*/
 ORDER BY r.created_at DESC

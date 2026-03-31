@@ -233,6 +233,16 @@ public sealed class DefaultProcessingCapabilityApi : IProcessingCapabilityApi
             };
         }
 
+        if (ResourceTagRules.ExceedsLimit(tag))
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "invalid-request",
+                ErrorMessage = $"Tag length must be <= {ResourceTagRules.MaxLength}."
+            };
+        }
+
         var normalized = NormalizeTag(tag);
         if (string.IsNullOrWhiteSpace(normalized))
         {
@@ -334,6 +344,16 @@ public sealed class DefaultProcessingCapabilityApi : IProcessingCapabilityApi
                 Success = false,
                 Status = "invalid-request",
                 ErrorMessage = "ResourceId is required."
+            };
+        }
+
+        if (ResourceTagRules.ExceedsLimit(tag))
+        {
+            return new TagMutationResult
+            {
+                Success = false,
+                Status = "invalid-request",
+                ErrorMessage = $"Tag length must be <= {ResourceTagRules.MaxLength}."
             };
         }
 
@@ -545,11 +565,6 @@ public sealed class DefaultProcessingCapabilityApi : IProcessingCapabilityApi
 
     private static string NormalizeTag(string? raw)
     {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return string.Empty;
-        }
-
-        return raw.Trim().TrimStart('#');
+        return ResourceTagRules.Normalize(raw) ?? string.Empty;
     }
 }

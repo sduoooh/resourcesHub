@@ -3,16 +3,25 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using ResourceRouter.Core.Abstractions;
+using ResourceRouter.Core.Models;
 using ResourceRouter.PluginSdk;
 
 namespace ResourceRouter.Core.Services.NoOp;
 
 public sealed class NoOpProcessingConfigurationProvider : IProcessingConfigurationProvider
 {
-    public bool EnableOcr => false;
-    public bool EnableAudioTranscription => false;
     public IProcessingCapabilityApi CapabilityApi { get; } = new NoOpProcessingCapabilityApi();
-    public IReadOnlyDictionary<string, string> GetPluginOptions(string converterName, string mimeType) => new Dictionary<string, string>();
+
+    public ProcessingConfigurationSnapshot Resolve(Resource resource, IFormatConverter? converter)
+    {
+        return new ProcessingConfigurationSnapshot
+        {
+            EnableOcr = false,
+            EnableAudioTranscription = false,
+            CapabilityApi = CapabilityApi,
+            PluginOptions = new Dictionary<string, string>()
+        };
+    }
 }
 
 public sealed class NoOpProcessingCapabilityApi : IProcessingCapabilityApi

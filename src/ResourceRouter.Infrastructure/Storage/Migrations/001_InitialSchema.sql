@@ -6,11 +6,21 @@ DROP TABLE IF EXISTS resources;
 CREATE TABLE resources (
     id TEXT NOT NULL PRIMARY KEY,
     created_at TEXT NOT NULL,
+    raw_kind INTEGER NOT NULL DEFAULT 0,
+    source_uri TEXT NULL,
+    internal_path TEXT NULL,
     persistence_policy INTEGER NOT NULL DEFAULT 0,
+    source_last_modified_at TEXT NULL,
+    source_app_hint TEXT NULL,
+    captured_at TEXT NULL,
+    original_suggested_name TEXT NULL,
     original_file_name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     source INTEGER NOT NULL,
+    processed_route_id TEXT NULL,
+    processed_file_path TEXT NULL,
+    processed_text TEXT NULL,
     thumbnail_path TEXT NULL,
     summary TEXT NULL,
     condition_tags_json TEXT NOT NULL,
@@ -27,27 +37,6 @@ CREATE TABLE resources (
     last_error TEXT NULL,
     feature_hash TEXT NULL,
     health_json TEXT NULL
-);
-
-CREATE TABLE resource_raw_payloads (
-    resource_id TEXT NOT NULL PRIMARY KEY,
-    raw_kind INTEGER NOT NULL,
-    source_uri TEXT NULL,
-    internal_path TEXT NULL,
-    source_last_modified_at TEXT NULL,
-    source_app_hint TEXT NULL,
-    captured_at TEXT NULL,
-    original_suggested_name TEXT NULL,
-    FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE
-);
-
-CREATE TABLE resource_processed_payloads (
-    resource_id TEXT NOT NULL PRIMARY KEY,
-    route_id TEXT NULL,
-    processed_file_path TEXT NULL,
-    processed_text TEXT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE
 );
 
 CREATE VIRTUAL TABLE fts_resources USING fts5(

@@ -59,8 +59,10 @@ public partial class ConfigDialog : Window
         var propertyTags =
             TagsBox.Text
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(tag => !string.IsNullOrWhiteSpace(tag))
-                .Select(tag => tag.Trim().TrimStart('#'))
+                .Select(ResourceTagRules.Normalize)
+                .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+                .Select(static tag => tag!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
         _metadataFacetPolicy.Apply(EditedResource, new ResourceMetadataFacet

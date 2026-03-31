@@ -33,7 +33,7 @@ public sealed class DefaultResourceMetadataFacetPolicy : IResourceMetadataFacetP
         ArgumentNullException.ThrowIfNull(resource);
         ArgumentNullException.ThrowIfNull(nextFacet);
 
-        var normalizedTitle = Normalize(nextFacet.TitleOverride);
+        var normalizedTitle = ResourceAliasRules.Normalize(nextFacet.TitleOverride);
         var normalizedAnnotations = Normalize(nextFacet.Annotations);
         var normalizedSummary = Normalize(nextFacet.Summary);
         var normalizedConditionTags = NormalizeTags(nextFacet.ConditionTags);
@@ -67,9 +67,9 @@ public sealed class DefaultResourceMetadataFacetPolicy : IResourceMetadataFacetP
         }
 
         return tags
+            .Select(ResourceTagRules.Normalize)
             .Where(static tag => !string.IsNullOrWhiteSpace(tag))
-            .Select(static tag => tag.Trim().TrimStart('#'))
-            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(static tag => tag!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase)
             .ToArray();

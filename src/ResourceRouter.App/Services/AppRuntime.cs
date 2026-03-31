@@ -3,9 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -22,18 +19,6 @@ namespace ResourceRouter.App.Services;
 
 public sealed class AppRuntime : IDisposable
 {
-    private const string FrameworkBasicDocumentKey = "framework.basic";
-    private const string FrameworkNativeDocumentKey = "framework.native";
-    private const string PluginSettingsDocumentKey = "plugins.settings";
-    private static readonly Guid FrameworkBasicResourceId = Guid.Parse("f344dd5b-2af9-4382-af74-d9c9460136ee");
-    private static readonly Guid FrameworkNativeResourceId = Guid.Parse("cb2ceaf4-518f-4413-b66f-70f3688b4ebe");
-    private static readonly Guid PluginSettingsResourceId = Guid.Parse("2db68f03-2f78-4680-b5bc-9eb4f77ef32c");
-    private static readonly JsonSerializerOptions ConfigResourceJsonOptions = new()
-    {
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
-
     private readonly FileLogger _logger;
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(45) };
     private readonly SemaphoreSlim _configMutationLock = new(1, 1);
@@ -93,7 +78,8 @@ public sealed class AppRuntime : IDisposable
 
         var resourceStore = new SqliteResourceStore();
         var searchIndex = new SearchEngine(resourceStore);
-        var resourceManager = new ResourceManager(resourceStore, searchIndex);
+        var resourceManager = new ResourceManager(resourceStore);
+        BindSearchProjection(resourceManager, searchIndex);
         var metadataFacetPolicy = new DefaultResourceMetadataFacetPolicy();
 
         IAIProvider aiProvider = new NoOpAIProvider();
@@ -133,8 +119,33 @@ public sealed class AppRuntime : IDisposable
         PipelineEngine = pipeline;
         MetadataFacetPolicy = metadataFacetPolicy;
         _cloudSyncProvider = cloudSyncProvider;
+    }
 
-        await SyncConfigResourcesAsync(config).ConfigureAwait(false);
+    private void BindSearchProjection(ResourceManager resourceManager, ISearchIndex searchIndex)
+    {
+        resourceManager.OnResourceCreated += async (_, args) =>
+        {
+            try
+            {
+                await searchIndex.IndexAsync(args.Resource).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"资源索引创建投影失败: {ex.Message}");
+            }
+        };
+
+        resourceManager.OnResourceUpdated += async (_, args) =>
+        {
+            try
+            {
+                await searchIndex.IndexAsync(args.Resource).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"资源索引更新投影失败: {ex.Message}");
+            }
+        };
     }
 
     public async Task HandleResourceConfigChangedAsync(
@@ -197,7 +208,7 @@ public sealed class AppRuntime : IDisposable
             {
                 if (string.IsNullOrWhiteSpace(resource.InternalPath) || !File.Exists(resource.InternalPath))
                 {
-                    var resourceDir = Path.Combine(LocalPathProvider.RawDirectory, resource.Id.ToString("N"));
+                    var resourceDir = LocalPathProvider.GetRawResourceDirectory(resource.Id);
                     Directory.CreateDirectory(resourceDir);
                     var internalPath = Path.Combine(resourceDir, Path.GetFileName(resource.SourceUri));
 
@@ -222,7 +233,7 @@ public sealed class AppRuntime : IDisposable
             {
                 if (string.IsNullOrWhiteSpace(resource.InternalPath) || !File.Exists(resource.InternalPath))
                 {
-                    var resourceDir = Path.Combine(LocalPathProvider.RawDirectory, resource.Id.ToString("N"));
+                    var resourceDir = LocalPathProvider.GetRawResourceDirectory(resource.Id);
                     Directory.CreateDirectory(resourceDir);
                     var internalPath = Path.Combine(resourceDir, Path.GetFileName(resource.SourceUri));
 
@@ -275,61 +286,7 @@ public sealed class AppRuntime : IDisposable
         await ConfigStore.SaveAsync(normalizedConfig).ConfigureAwait(false);
         Config = normalizedConfig;
         _cloudSyncProvider = new NoOpCloudSyncProvider();
-        await SyncConfigResourcesAsync(normalizedConfig).ConfigureAwait(false);
         return (normalizedConfig, normalized);
-    }
-
-    private async Task SyncConfigResourcesAsync(AppConfig config)
-    {
-        try
-        {
-            var projectionDir = Path.Combine(LocalPathProvider.RootDirectory, "config-resources");
-            Directory.CreateDirectory(projectionDir);
-
-            var documents = BuildConfigResourceDocuments(config);
-            foreach (var doc in documents)
-            {
-                var filePath = Path.Combine(projectionDir, doc.FileName);
-                await File.WriteAllTextAsync(filePath, doc.JsonContent).ConfigureAwait(false);
-
-                var existing = await ResourceManager.GetByIdAsync(doc.Id).ConfigureAwait(false);
-                var createdAt = existing?.CreatedAt ?? DateTimeOffset.UtcNow;
-                var fileInfo = new FileInfo(filePath);
-
-                var resource = new Resource
-                {
-                    Id = doc.Id,
-                    CreatedAt = createdAt,
-                    SourceUri = filePath,
-                    OriginalFileName = Path.GetFileName(filePath),
-                    MimeType = "application/json",
-                    FileSize = fileInfo.Exists ? fileInfo.Length : 0,
-                    Source = ResourceSource.Manual,
-                    ProcessedFilePath = filePath,
-                    ProcessedText = doc.JsonContent,
-                    ThumbnailPath = existing?.ThumbnailPath,
-                    Summary = existing?.Summary,
-                    ConditionTags = doc.ConditionTags,
-                    TitleOverride = doc.Title,
-                    Annotations = existing?.Annotations,
-                    PropertyTags = doc.PropertyTags,
-                    Privacy = PrivacyLevel.Private,
-                    SyncPolicy = SyncPolicy.LocalOnly,
-                    SyncTargetDevices = Array.Empty<string>(),
-                    ProcessingModel = ModelType.None,
-                    PermissionPresetId = PermissionPreset.PrivatePresetId,
-                    State = ResourceState.Ready,
-                    WaitingExpiresAt = null,
-                    LastError = null
-                };
-
-                await ResourceManager.AddAsync(resource).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning($"配置资源投影失败: {ex.Message}");
-        }
     }
 
     private AppConfig NormalizeUnsupportedMechanismConfig(AppConfig input, bool notifyUser, out bool normalized)
@@ -446,95 +403,6 @@ public sealed class AppRuntime : IDisposable
         return switches.Any(static kv => kv.Value);
     }
 
-    private static IReadOnlyList<ConfigResourceDocumentData> BuildConfigResourceDocuments(AppConfig config)
-    {
-        var basic = new FrameworkBasicConfigResource
-        {
-            DefaultPrivacy = config.DefaultPrivacy,
-            DefaultSyncPolicy = config.DefaultSyncPolicy,
-            DefaultProcessingModel = config.DefaultProcessingModel,
-            EnableAI = config.EnableAI,
-            OllamaEndpoint = config.OllamaEndpoint,
-            PluginDirectory = config.PluginDirectory,
-            DefaultPermissionPresetId = config.DefaultPermissionPresetId
-        };
-
-        var native = new FrameworkNativeConfigResource
-        {
-            EnableInternalMechanisms = config.EnableInternalMechanisms,
-            EnableOcr = config.EnableOcr,
-            OcrProvider = config.OcrProvider,
-            OcrCliPath = config.OcrCliPath,
-            OcrEndpoint = config.OcrEndpoint,
-            OcrModel = config.OcrModel,
-            OcrApiKey = config.OcrApiKey,
-            EnableAudioTranscription = config.EnableAudioTranscription,
-            AudioTranscriptionProvider = config.AudioTranscriptionProvider,
-            AudioTranscriptionCliPath = config.AudioTranscriptionCliPath,
-            AudioTranscriptionEndpoint = config.AudioTranscriptionEndpoint,
-            AudioTranscriptionModel = config.AudioTranscriptionModel,
-            AudioTranscriptionApiKey = config.AudioTranscriptionApiKey,
-            CloudAiProvider = config.CloudAiProvider,
-            CloudAiEndpoint = config.CloudAiEndpoint,
-            CloudAiModel = config.CloudAiModel,
-            CloudAiApiKey = config.CloudAiApiKey ?? config.CloudApiKey,
-            CloudSyncProvider = config.CloudSyncProvider,
-            CloudEndpoint = config.CloudEndpoint,
-            RemoteProvider = config.RemoteProvider,
-            RemoteEndpoint = config.RemoteEndpoint,
-            EnableRemoteMechanism = config.EnableRemoteMechanism,
-            ThumbnailProviderMode = config.ThumbnailProviderMode,
-            HealthMonitoringByType = new Dictionary<string, bool>(config.HealthMonitoringByType, StringComparer.OrdinalIgnoreCase),
-            FeatureizationByType = new Dictionary<string, bool>(config.FeatureizationByType, StringComparer.OrdinalIgnoreCase),
-            DedupByType = new Dictionary<string, bool>(config.DedupByType, StringComparer.OrdinalIgnoreCase),
-            HealthMonitoringBySource = new Dictionary<string, bool>(config.HealthMonitoringBySource, StringComparer.OrdinalIgnoreCase),
-            FeatureizationBySource = new Dictionary<string, bool>(config.FeatureizationBySource, StringComparer.OrdinalIgnoreCase),
-            DedupBySource = new Dictionary<string, bool>(config.DedupBySource, StringComparer.OrdinalIgnoreCase)
-        };
-
-        var plugin = new PluginSettingsConfigResource
-        {
-            PluginSettings = config.PluginSettings.ToDictionary(
-                kv => kv.Key,
-                kv => new Dictionary<string, string>(kv.Value, StringComparer.OrdinalIgnoreCase),
-                StringComparer.OrdinalIgnoreCase)
-        };
-
-        return new[]
-        {
-            new ConfigResourceDocumentData
-            {
-                DocumentKey = FrameworkBasicDocumentKey,
-                Id = FrameworkBasicResourceId,
-                FileName = "framework.basic.json",
-                Title = "框架基础配置",
-                ConditionTags = new[] { "config" },
-                PropertyTags = new[] { "framework", "basic" },
-                JsonContent = JsonSerializer.Serialize(basic, ConfigResourceJsonOptions)
-            },
-            new ConfigResourceDocumentData
-            {
-                DocumentKey = FrameworkNativeDocumentKey,
-                Id = FrameworkNativeResourceId,
-                FileName = "framework.native.json",
-                Title = "框架原生能力配置",
-                ConditionTags = new[] { "config" },
-                PropertyTags = new[] { "framework", "native" },
-                JsonContent = JsonSerializer.Serialize(native, ConfigResourceJsonOptions)
-            },
-            new ConfigResourceDocumentData
-            {
-                DocumentKey = PluginSettingsDocumentKey,
-                Id = PluginSettingsResourceId,
-                FileName = "plugins.settings.json",
-                Title = "插件配置集合",
-                ConditionTags = new[] { "config" },
-                PropertyTags = new[] { "plugin", "settings" },
-                JsonContent = JsonSerializer.Serialize(plugin, ConfigResourceJsonOptions)
-            }
-        };
-    }
-
     private static bool HasInternalMechanismConfigEnabled(AppConfig input)
     {
         var cloudAiEnabled = !string.Equals(
@@ -561,107 +429,6 @@ public sealed class AppRuntime : IDisposable
             thumbnailEnabled;
     }
 
-    private sealed class ConfigResourceDocumentData
-    {
-        public required string DocumentKey { get; init; }
-
-        public required Guid Id { get; init; }
-
-        public required string FileName { get; init; }
-
-        public required string Title { get; init; }
-
-        public required string[] ConditionTags { get; init; }
-
-        public required string[] PropertyTags { get; init; }
-
-        public required string JsonContent { get; init; }
-    }
-
-    private sealed class FrameworkBasicConfigResource
-    {
-        public PrivacyLevel DefaultPrivacy { get; init; }
-
-        public SyncPolicy DefaultSyncPolicy { get; init; }
-
-        public ModelType DefaultProcessingModel { get; init; }
-
-        public bool EnableAI { get; init; }
-
-        public string OllamaEndpoint { get; init; } = "http://localhost:11434/api/generate";
-
-        public string? PluginDirectory { get; init; }
-
-        public string? DefaultPermissionPresetId { get; init; }
-    }
-
-    private sealed class FrameworkNativeConfigResource
-    {
-        public bool EnableInternalMechanisms { get; init; }
-
-        public bool EnableOcr { get; init; }
-
-        public string OcrProvider { get; init; } = NativeCapabilityProviders.Ocr.Auto;
-
-        public string? OcrCliPath { get; init; }
-
-        public string? OcrEndpoint { get; init; }
-
-        public string OcrModel { get; init; } = "eng+chi_sim";
-
-        public string? OcrApiKey { get; init; }
-
-        public bool EnableAudioTranscription { get; init; }
-
-        public string AudioTranscriptionProvider { get; init; } = NativeCapabilityProviders.AudioTranscription.Auto;
-
-        public string? AudioTranscriptionCliPath { get; init; }
-
-        public string? AudioTranscriptionEndpoint { get; init; }
-
-        public string AudioTranscriptionModel { get; init; } = "whisper-1";
-
-        public string? AudioTranscriptionApiKey { get; init; }
-
-        public string CloudAiProvider { get; init; } = NativeCapabilityProviders.CloudAI.Auto;
-
-        public string? CloudAiEndpoint { get; init; }
-
-        public string CloudAiModel { get; init; } = "gpt-4o-mini";
-
-        public string? CloudAiApiKey { get; init; }
-
-        public string CloudSyncProvider { get; init; } = NativeCapabilityProviders.CloudSync.Auto;
-
-        public string? CloudEndpoint { get; init; }
-
-        public string RemoteProvider { get; init; } = NativeCapabilityProviders.Remote.Auto;
-
-        public string? RemoteEndpoint { get; init; }
-
-        public bool EnableRemoteMechanism { get; init; }
-
-        public string ThumbnailProviderMode { get; init; } = NativeCapabilityProviders.Thumbnail.Auto;
-
-        public Dictionary<string, bool> HealthMonitoringByType { get; init; } =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        public Dictionary<string, bool> FeatureizationByType { get; init; } =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        public Dictionary<string, bool> DedupByType { get; init; } =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        public Dictionary<string, bool> HealthMonitoringBySource { get; init; } =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        public Dictionary<string, bool> FeatureizationBySource { get; init; } =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        public Dictionary<string, bool> DedupBySource { get; init; } =
-            new(StringComparer.OrdinalIgnoreCase);
-    }
-
     private sealed class NoOpAIProvider : IAIProvider
     {
         public Task<AIResult> AnalyzeAsync(Resource resource, CancellationToken cancellationToken = default)
@@ -676,12 +443,6 @@ public sealed class AppRuntime : IDisposable
         {
             return Task.FromResult<string?>(null);
         }
-    }
-
-    private sealed class PluginSettingsConfigResource
-    {
-        public Dictionary<string, Dictionary<string, string>> PluginSettings { get; init; } =
-            new(StringComparer.OrdinalIgnoreCase);
     }
 
     public void Dispose()

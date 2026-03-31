@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using ResourceRouter.Core.Models;
 using ResourceRouter.Infrastructure.Storage;
 
@@ -49,7 +50,7 @@ public sealed class SqliteResourceStoreTests
     }
 
     [Fact]
-    public async Task SqliteStore_RoundTripsSplitRawAndProcessedPayload()
+    public async Task SqliteStore_RoundTripsSingleTableRawAndProcessedPayload()
     {
         var dbPath = Path.Combine(LocalPathProvider.TestTempDirectory, $"rr-split-{Guid.NewGuid():N}.db");
         var id = Guid.NewGuid();
@@ -89,6 +90,23 @@ public sealed class SqliteResourceStoreTests
         Assert.Equal("processed", restored.ProcessedText);
         Assert.Contains("config", restored.ConditionTags);
         Assert.Contains("tag-a", restored.PropertyTags);
+
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWrite
+        }.ToString());
+
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT COUNT(1)
+FROM sqlite_master
+WHERE type = 'table'
+  AND name IN ('resource_raw_payloads', 'resource_processed_payloads');";
+
+        var legacyTableCount = Convert.ToInt32(await command.ExecuteScalarAsync());
+        Assert.Equal(0, legacyTableCount);
     }
 
     [Fact]

@@ -16,17 +16,26 @@ public sealed class RuntimeProcessingConfigurationProvider : IProcessingConfigur
         CapabilityApi = capabilityApi;
     }
 
-    public bool EnableOcr => _configAccessor().EnableOcr;
-
-    public bool EnableAudioTranscription => _configAccessor().EnableAudioTranscription;
-
     public IProcessingCapabilityApi CapabilityApi { get; }
 
-    public IReadOnlyDictionary<string, string> GetPluginOptions(string converterName, string mimeType)
+    public ProcessingConfigurationSnapshot Resolve(Resource resource, IFormatConverter? converter)
     {
         var config = _configAccessor();
+        var converterName = converter?.Name ?? string.Empty;
 
-        if (config.PluginSettings.TryGetValue(converterName, out var byConverter))
+        return new ProcessingConfigurationSnapshot
+        {
+            EnableOcr = config.EnableOcr,
+            EnableAudioTranscription = config.EnableAudioTranscription,
+            CapabilityApi = CapabilityApi,
+            PluginOptions = GetPluginOptions(config, converterName, resource.MimeType)
+        };
+    }
+
+    private static IReadOnlyDictionary<string, string> GetPluginOptions(AppConfig config, string converterName, string mimeType)
+    {
+        if (!string.IsNullOrWhiteSpace(converterName)
+            && config.PluginSettings.TryGetValue(converterName, out var byConverter))
         {
             return byConverter;
         }

@@ -156,7 +156,9 @@ public sealed class PluginHost : IFormatConverterResolver
                 ConverterName = converter.Name,
                 SourceMatchLevel = sourceMatch,
                 FormatMatchLevel = formatMatch,
-                Rank = ComputeRank(sourceMatch, formatMatch, descriptor.Priority)
+                Rank = ComputeRank(sourceMatch, formatMatch, descriptor.Priority),
+                IsExportable = true,
+                LockReason = null
             };
 
             candidates.Add(new RouteCandidate(converter, route));

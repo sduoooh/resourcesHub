@@ -23,10 +23,11 @@ public sealed class PipelineEngine
     private readonly IResourceFeatureExtractor _featureExtractor;
     private readonly IResourceGovernanceProvider _governanceProvider;
     private readonly IProcessingConfigurationProvider _processingConfigurationProvider;
+    private readonly IWaitingScheduler _waitingScheduler;
+    private readonly ISyncOrchestrator _syncOrchestrator;
     private readonly IResourceMetadataFacetPolicy _metadataFacetPolicy;
     private readonly IAppLogger? _logger;
     private readonly SemaphoreSlim _processingSemaphore;
-    private readonly SemaphoreSlim _syncSemaphore;
 
     private readonly ConcurrentDictionary<Guid, PendingResource> _waitingQueue = new();
     private readonly ConcurrentDictionary<Guid, byte> _suppressedResourceIds = new();
@@ -45,7 +46,9 @@ public sealed class PipelineEngine
         IResourceMetadataFacetPolicy? metadataFacetPolicy = null,
         IAppLogger? logger = null,
         int maxConcurrentProcessing = 2,
-        int maxConcurrentSync = 1)
+        int maxConcurrentSync = 1,
+        IWaitingScheduler? waitingScheduler = null,
+        ISyncOrchestrator? syncOrchestrator = null)
     {
         _storageProvider = storageProvider;
         _resourceManager = resourceManager;
@@ -60,7 +63,8 @@ public sealed class PipelineEngine
         _metadataFacetPolicy = metadataFacetPolicy ?? new DefaultResourceMetadataFacetPolicy();
         _logger = logger;
         _processingSemaphore = new SemaphoreSlim(Math.Max(1, maxConcurrentProcessing), Math.Max(1, maxConcurrentProcessing));
-        _syncSemaphore = new SemaphoreSlim(Math.Max(1, maxConcurrentSync), Math.Max(1, maxConcurrentSync));
+        _waitingScheduler = waitingScheduler ?? new DefaultWaitingScheduler(_logger);
+        _syncOrchestrator = syncOrchestrator ?? new DefaultSyncOrchestrator(_cloudSyncProvider, _logger, maxConcurrentSync);
     }
 
     public event EventHandler<PendingResource>? OnResourceEnterWaiting;
@@ -77,10 +81,16 @@ public sealed class PipelineEngine
         var healthReport = await _healthMonitor.ProbeDropAsync(dropData, cancellationToken).ConfigureAwait(false);
         if (!healthReport.IsHealthy)
         {
-            throw new InvalidOperationException($"Health check failed: {healthReport.Message}");
+            _logger?.LogWarning($"Drop health check reported unavailable, continue with degraded mode: {healthReport.Message}");
         }
 
         var resource = await _storageProvider.StoreRawAsync(dropData, options, cancellationToken).ConfigureAwait(false);
+        resource.Health = new ResourceHealthStatus
+        {
+            LastCheckAt = DateTimeOffset.UtcNow,
+            LastCheckPassed = healthReport.IsHealthy,
+            LastCheckMessage = healthReport.Message
+        };
 
         var policy = _governanceProvider.GetPolicy(dropData, resource.Source);
         if (!policy.EnableHealthMonitoring)
@@ -181,28 +191,8 @@ public sealed class PipelineEngine
             return;
         }
 
-        pending.Resource.PermissionPresetId = updatedResource.PermissionPresetId;
-        pending.Resource.Privacy = updatedResource.Privacy;
-        pending.Resource.SyncPolicy = updatedResource.SyncPolicy;
-        pending.Resource.ProcessingModel = updatedResource.ProcessingModel;
-        pending.Resource.PersistencePolicy = updatedResource.PersistencePolicy;
-        pending.Resource.ProcessedRouteId = updatedResource.ProcessedRouteId;
-
-        var updatedFacet = _metadataFacetPolicy.Read(updatedResource);
-        _metadataFacetPolicy.Apply(pending.Resource, new ResourceMetadataFacet
-        {
-            TitleOverride = updatedFacet.TitleOverride,
-            Annotations = updatedFacet.Annotations,
-            Summary = updatedFacet.Summary,
-            ConditionTags = updatedFacet.ConditionTags,
-            PropertyTags = updatedFacet.PropertyTags,
-            OriginalFileName = updatedFacet.OriginalFileName,
-            MimeType = updatedFacet.MimeType,
-            FileSize = updatedFacet.FileSize,
-            Source = updatedFacet.Source,
-            CreatedAt = updatedFacet.CreatedAt,
-            ExtensionMetadata = updatedFacet.ExtensionMetadata
-        });
+        var changeSet = PendingResourceConfigurationChangeSet.FromResource(updatedResource, _metadataFacetPolicy);
+        changeSet.ApplyTo(pending.Resource, _metadataFacetPolicy);
     }
 
     public async Task ExecutePipelineAsync(Resource resource, CancellationToken cancellationToken = default)
@@ -217,14 +207,16 @@ public sealed class PipelineEngine
             }
 
             var finalHealthReport = await _healthMonitor.ProbeResourceAsync(resource, cancellationToken).ConfigureAwait(false);
+            resource.Health = new ResourceHealthStatus
+            {
+                LastCheckAt = DateTimeOffset.UtcNow,
+                LastCheckPassed = finalHealthReport.IsHealthy,
+                LastCheckMessage = finalHealthReport.Message
+            };
+
             if (!finalHealthReport.IsHealthy)
             {
-                resource.State = ResourceState.Error;
-                resource.LastError = $"Resource specific health check failed: {finalHealthReport.Message}";
-                await _resourceManager.UpdateAsync(resource, cancellationToken).ConfigureAwait(false);
-                _waitingQueue.TryRemove(resource.Id, out _);
-                OnResourceError?.Invoke(this, new ResourceErrorEventArgs { Resource = resource, Exception = new InvalidOperationException(resource.LastError) });
-                return;
+                _logger?.LogWarning($"Resource health check reported unavailable, pipeline continues: {finalHealthReport.Message}");
             }
 
             resource.State = ResourceState.Processing;
@@ -261,6 +253,7 @@ public sealed class PipelineEngine
             }
 
             var converter = _converterResolver.Resolve(resource.Source, resource.MimeType, resource.ProcessedRouteId);
+            var processingConfiguration = _processingConfigurationProvider.Resolve(resource, converter);
             var activePath = resource.GetActivePath();
             if (converter is not null && !string.IsNullOrWhiteSpace(activePath))
             {
@@ -273,10 +266,10 @@ public sealed class PipelineEngine
                         "processed",
                         resource.Id.ToString("N")),
                     PreferTextOutput = true,
-                    EnableOcr = _processingConfigurationProvider.EnableOcr,
-                    EnableAudioTranscription = _processingConfigurationProvider.EnableAudioTranscription,
-                    CapabilityApi = _processingConfigurationProvider.CapabilityApi,
-                    PluginOptions = _processingConfigurationProvider.GetPluginOptions(converter.Name, resource.MimeType)
+                    EnableOcr = processingConfiguration.EnableOcr,
+                    EnableAudioTranscription = processingConfiguration.EnableAudioTranscription,
+                    CapabilityApi = processingConfiguration.CapabilityApi,
+                    PluginOptions = processingConfiguration.PluginOptions
                 };
 
                 var conversion = await converter
@@ -299,9 +292,9 @@ public sealed class PipelineEngine
                 var currentFacet = _metadataFacetPolicy.Read(resource);
                 var mergedPropertyTags = currentFacet.PropertyTags
                     .Concat(aiResult.Tags ?? Array.Empty<string>())
+                    .Select(ResourceTagRules.Normalize)
                     .Where(static tag => !string.IsNullOrWhiteSpace(tag))
-                    .Select(static tag => tag.Trim().TrimStart('#'))
-                    .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+                    .Select(static tag => tag!)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(static tag => tag, StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -342,22 +335,7 @@ public sealed class PipelineEngine
 
             if (resource.SyncPolicy == SyncPolicy.CloudDefault)
             {
-                _ = Task.Run(async () =>
-                {
-                    await _syncSemaphore.WaitAsync().ConfigureAwait(false);
-                    try
-                    {
-                        await _cloudSyncProvider.UploadAsync(resource).ConfigureAwait(false);
-                    }
-                    catch (Exception syncEx)
-                    {
-                        _logger?.LogError($"资源同步失败: {resource.Id}", syncEx);
-                    }
-                    finally
-                    {
-                        _syncSemaphore.Release();
-                    }
-                });
+                _syncOrchestrator.EnqueueUpload(resource, cancellationToken);
             }
 
             _waitingQueue.TryRemove(resource.Id, out _);
@@ -385,24 +363,19 @@ public sealed class PipelineEngine
 
     private void StartWaitingCountdown(PendingResource pending, TimeSpan duration)
     {
-        _ = Task.Run(async () =>
-        {
-            try
+        _waitingScheduler.Schedule(
+            pending.Resource.Id,
+            duration,
+            pending.CancellationSource.Token,
+            async cancellationToken =>
             {
-                await Task.Delay(duration, pending.CancellationSource.Token).ConfigureAwait(false);
-
                 if (IsSuppressed(pending.Resource.Id))
                 {
                     return;
                 }
 
-                await ExecutePipelineAsync(pending.Resource, pending.CancellationSource.Token).ConfigureAwait(false);
-            }
-            catch (TaskCanceledException)
-            {
-                _logger?.LogInfo($"等待态已取消: {pending.Resource.Id}");
-            }
-        }, CancellationToken.None);
+                await ExecutePipelineAsync(pending.Resource, cancellationToken).ConfigureAwait(false);
+            });
     }
 
     private bool IsSuppressed(Guid resourceId)

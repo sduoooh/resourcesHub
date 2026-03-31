@@ -11,6 +11,18 @@ using ResourceRouter.Core.Models;
 
 namespace ResourceRouter.App.Interop;
 
+public interface IDataObjectExtractor
+{
+    IReadOnlyList<RawDropData> Extract(IDataObject dataObject, DateTimeOffset capturedAt, string? sourceAppHint);
+}
+
+public interface IResourceDragPayloadBuilder
+{
+    bool CanBuild(Resource resource, DragVariant variant);
+
+    IExportablePayload Build(Resource resource, DragVariant variant);
+}
+
 public static class DragDropBridge
 {
     private const string UrlFormatW = "UniformResourceLocatorW";
@@ -27,111 +39,37 @@ public static class DragDropBridge
         WriteImagePayload
     ];
 
-    private static readonly IReadOnlyDictionary<RawDropKind, Func<Resource, ExportablePayload>> RawPayloadBuilders =
-        new Dictionary<RawDropKind, Func<Resource, ExportablePayload>>
-        {
-            [RawDropKind.File] = BuildRawFilePayload,
-            [RawDropKind.Text] = BuildRawTextPayload,
-            [RawDropKind.Html] = BuildRawHtmlPayload,
-            [RawDropKind.Url] = BuildRawUrlPayload,
-            [RawDropKind.Bitmap] = BuildRawBitmapPayload
-        };
+    private static readonly IReadOnlyList<IDataObjectExtractor> DataObjectExtractors =
+    [
+        new FileDropDataExtractor(),
+        new FileNameDataExtractor(),
+        new BitmapDataExtractor(),
+        new HtmlDataExtractor(),
+        new UrlDataExtractor(),
+        new TextDataExtractor()
+    ];
 
-    public readonly record struct ConfigEditorDragPayload(string LaunchFilePath, string EditorUri);
+    private static readonly IReadOnlyList<IResourceDragPayloadBuilder> DragPayloadBuilders =
+    [
+        new ProcessedDragPayloadBuilder(),
+        new RawKindDragPayloadBuilder(RawDropKind.File, BuildRawFilePayload),
+        new RawKindDragPayloadBuilder(RawDropKind.Text, BuildRawTextPayload),
+        new RawKindDragPayloadBuilder(RawDropKind.Html, BuildRawHtmlPayload),
+        new RawKindDragPayloadBuilder(RawDropKind.Url, BuildRawUrlPayload),
+        new RawKindDragPayloadBuilder(RawDropKind.Bitmap, BuildRawBitmapPayload),
+        new RawFallbackDragPayloadBuilder()
+    ];
 
     public static IReadOnlyList<RawDropData> Extract(IDataObject dataObject, string? sourceAppHint = null)
     {
         var capturedAt = DateTimeOffset.UtcNow;
 
-        if (TryGetData(dataObject, DataFormats.FileDrop, out var fileDropData))
+        foreach (var extractor in DataObjectExtractors)
         {
-            if (fileDropData is string[] filePaths && filePaths.Length > 0)
+            var drops = extractor.Extract(dataObject, capturedAt, sourceAppHint);
+            if (drops.Count > 0)
             {
-                return BuildFileDrops(filePaths, capturedAt, sourceAppHint);
-            }
-
-            if (fileDropData is StringCollection fileDropCollection && fileDropCollection.Count > 0)
-            {
-                var paths = fileDropCollection.Cast<string>().ToArray();
-                return BuildFileDrops(paths, capturedAt, sourceAppHint);
-            }
-        }
-
-        var fileNameData = TryExtractFileNames(dataObject);
-        if (fileNameData.Count > 0)
-        {
-            return BuildFileDrops(fileNameData.ToArray(), capturedAt, sourceAppHint);
-        }
-
-        if (TryGetData(dataObject, DataFormats.Bitmap, out var bitmapData))
-        {
-            if (bitmapData is BitmapSource bitmap)
-            {
-                return new[]
-                {
-                    new RawDropData
-                    {
-                        Kind = RawDropKind.Bitmap,
-                        BitmapBytes = EncodeBitmapPng(bitmap),
-                        CapturedAt = capturedAt,
-                        SourceAppHint = sourceAppHint,
-                        OriginalSuggestedName = "image.png"
-                    }
-                };
-            }
-        }
-
-        if (TryGetData(dataObject, DataFormats.Html, out var htmlData))
-        {
-            if (htmlData is string html)
-            {
-                return new[]
-                {
-                    new RawDropData
-                    {
-                        Kind = RawDropKind.Html,
-                        Html = html,
-                        Text = html,
-                        CapturedAt = capturedAt,
-                        SourceAppHint = sourceAppHint,
-                        OriginalSuggestedName = "snippet.html"
-                    }
-                };
-            }
-        }
-
-        var extractedUrl = ReadUrl(dataObject);
-        if (!string.IsNullOrWhiteSpace(extractedUrl))
-        {
-            return new[]
-            {
-                new RawDropData
-                {
-                    Kind = RawDropKind.Url,
-                    Url = extractedUrl,
-                    Text = extractedUrl,
-                    CapturedAt = capturedAt,
-                    SourceAppHint = sourceAppHint,
-                    OriginalSuggestedName = "link.url"
-                }
-            };
-        }
-
-        if (TryGetText(dataObject, out var text))
-        {
-            if (!string.IsNullOrWhiteSpace(text))
-            {
-                return new[]
-                {
-                    new RawDropData
-                    {
-                        Kind = RawDropKind.Text,
-                        Text = text,
-                        CapturedAt = capturedAt,
-                        SourceAppHint = sourceAppHint,
-                        OriginalSuggestedName = "content.txt"
-                    }
-                };
+                return drops;
             }
         }
 
@@ -172,31 +110,22 @@ public static class DragDropBridge
         Resource resource,
         DragVariant variant)
     {
-        var payload = variant == DragVariant.Raw
-            ? BuildRawPayload(resource)
-            : BuildProcessedPayload(resource);
+        var payload = BuildExportPayload(resource, variant);
 
         return CreateExportData(payload);
     }
 
-    private static ExportablePayload BuildRawPayload(Resource resource)
+    private static IExportablePayload BuildExportPayload(Resource resource, DragVariant variant)
     {
-        if (RawPayloadBuilders.TryGetValue(resource.RawKind, out var builder))
+        foreach (var builder in DragPayloadBuilders)
         {
-            return builder(resource);
+            if (builder.CanBuild(resource, variant))
+            {
+                return builder.Build(resource, variant);
+            }
         }
 
-        return BuildRawTextPayload(resource);
-    }
-
-    private static ExportablePayload BuildProcessedPayload(Resource resource)
-    {
-        return new ExportablePayload
-        {
-            FilePath = NullIfMissing(resource.ProcessedFilePath),
-            TextContent = string.IsNullOrWhiteSpace(resource.ProcessedText) ? null : resource.ProcessedText,
-            MimeTypeHint = resource.MimeType
-        };
+        return new ExportablePayload();
     }
 
     private static ExportablePayload BuildRawFilePayload(Resource resource)
@@ -573,5 +502,188 @@ public static class DragDropBridge
         }
 
         return result;
+    }
+
+    private sealed class FileDropDataExtractor : IDataObjectExtractor
+    {
+        public IReadOnlyList<RawDropData> Extract(IDataObject dataObject, DateTimeOffset capturedAt, string? sourceAppHint)
+        {
+            if (!TryGetData(dataObject, DataFormats.FileDrop, out var fileDropData))
+            {
+                return Array.Empty<RawDropData>();
+            }
+
+            if (fileDropData is string[] filePaths && filePaths.Length > 0)
+            {
+                return BuildFileDrops(filePaths, capturedAt, sourceAppHint);
+            }
+
+            if (fileDropData is StringCollection fileDropCollection && fileDropCollection.Count > 0)
+            {
+                var paths = fileDropCollection.Cast<string>().ToArray();
+                return BuildFileDrops(paths, capturedAt, sourceAppHint);
+            }
+
+            return Array.Empty<RawDropData>();
+        }
+    }
+
+    private sealed class FileNameDataExtractor : IDataObjectExtractor
+    {
+        public IReadOnlyList<RawDropData> Extract(IDataObject dataObject, DateTimeOffset capturedAt, string? sourceAppHint)
+        {
+            var fileNameData = TryExtractFileNames(dataObject);
+            return fileNameData.Count > 0
+                ? BuildFileDrops(fileNameData.ToArray(), capturedAt, sourceAppHint)
+                : Array.Empty<RawDropData>();
+        }
+    }
+
+    private sealed class BitmapDataExtractor : IDataObjectExtractor
+    {
+        public IReadOnlyList<RawDropData> Extract(IDataObject dataObject, DateTimeOffset capturedAt, string? sourceAppHint)
+        {
+            if (!TryGetData(dataObject, DataFormats.Bitmap, out var bitmapData) || bitmapData is not BitmapSource bitmap)
+            {
+                return Array.Empty<RawDropData>();
+            }
+
+            return
+            [
+                new RawDropData
+                {
+                    Kind = RawDropKind.Bitmap,
+                    BitmapBytes = EncodeBitmapPng(bitmap),
+                    CapturedAt = capturedAt,
+                    SourceAppHint = sourceAppHint,
+                    OriginalSuggestedName = "image.png"
+                }
+            ];
+        }
+    }
+
+    private sealed class HtmlDataExtractor : IDataObjectExtractor
+    {
+        public IReadOnlyList<RawDropData> Extract(IDataObject dataObject, DateTimeOffset capturedAt, string? sourceAppHint)
+        {
+            if (!TryGetData(dataObject, DataFormats.Html, out var htmlData) || htmlData is not string html)
+            {
+                return Array.Empty<RawDropData>();
+            }
+
+            return
+            [
+                new RawDropData
+                {
+                    Kind = RawDropKind.Html,
+                    Html = html,
+                    Text = html,
+                    CapturedAt = capturedAt,
+                    SourceAppHint = sourceAppHint,
+                    OriginalSuggestedName = "snippet.html"
+                }
+            ];
+        }
+    }
+
+    private sealed class UrlDataExtractor : IDataObjectExtractor
+    {
+        public IReadOnlyList<RawDropData> Extract(IDataObject dataObject, DateTimeOffset capturedAt, string? sourceAppHint)
+        {
+            var extractedUrl = ReadUrl(dataObject);
+            if (string.IsNullOrWhiteSpace(extractedUrl))
+            {
+                return Array.Empty<RawDropData>();
+            }
+
+            return
+            [
+                new RawDropData
+                {
+                    Kind = RawDropKind.Url,
+                    Url = extractedUrl,
+                    Text = extractedUrl,
+                    CapturedAt = capturedAt,
+                    SourceAppHint = sourceAppHint,
+                    OriginalSuggestedName = "link.url"
+                }
+            ];
+        }
+    }
+
+    private sealed class TextDataExtractor : IDataObjectExtractor
+    {
+        public IReadOnlyList<RawDropData> Extract(IDataObject dataObject, DateTimeOffset capturedAt, string? sourceAppHint)
+        {
+            if (!TryGetText(dataObject, out var text) || string.IsNullOrWhiteSpace(text))
+            {
+                return Array.Empty<RawDropData>();
+            }
+
+            return
+            [
+                new RawDropData
+                {
+                    Kind = RawDropKind.Text,
+                    Text = text,
+                    CapturedAt = capturedAt,
+                    SourceAppHint = sourceAppHint,
+                    OriginalSuggestedName = "content.txt"
+                }
+            ];
+        }
+    }
+
+    private sealed class ProcessedDragPayloadBuilder : IResourceDragPayloadBuilder
+    {
+        public bool CanBuild(Resource resource, DragVariant variant)
+        {
+            return variant == DragVariant.Processed;
+        }
+
+        public IExportablePayload Build(Resource resource, DragVariant variant)
+        {
+            return new ExportablePayload
+            {
+                FilePath = NullIfMissing(resource.ProcessedFilePath),
+                TextContent = string.IsNullOrWhiteSpace(resource.ProcessedText) ? null : resource.ProcessedText,
+                MimeTypeHint = resource.MimeType
+            };
+        }
+    }
+
+    private sealed class RawKindDragPayloadBuilder : IResourceDragPayloadBuilder
+    {
+        private readonly RawDropKind _rawKind;
+        private readonly Func<Resource, ExportablePayload> _builder;
+
+        public RawKindDragPayloadBuilder(RawDropKind rawKind, Func<Resource, ExportablePayload> builder)
+        {
+            _rawKind = rawKind;
+            _builder = builder;
+        }
+
+        public bool CanBuild(Resource resource, DragVariant variant)
+        {
+            return variant == DragVariant.Raw && resource.RawKind == _rawKind;
+        }
+
+        public IExportablePayload Build(Resource resource, DragVariant variant)
+        {
+            return _builder(resource);
+        }
+    }
+
+    private sealed class RawFallbackDragPayloadBuilder : IResourceDragPayloadBuilder
+    {
+        public bool CanBuild(Resource resource, DragVariant variant)
+        {
+            return variant == DragVariant.Raw;
+        }
+
+        public IExportablePayload Build(Resource resource, DragVariant variant)
+        {
+            return BuildRawTextPayload(resource);
+        }
     }
 }

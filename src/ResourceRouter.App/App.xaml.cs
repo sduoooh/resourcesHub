@@ -91,8 +91,10 @@ namespace ResourceRouter.App
             menu.ForeColor = Color.FromArgb(0xE8, 0xEE, 0xF5);
             menu.RenderMode = Forms.ToolStripRenderMode.Professional;
             menu.Renderer = new Forms.ToolStripProfessionalRenderer(new TrayMenuColorTable());
+            var trayMenuItemMargin = new Forms.Padding(4, 3, 4, 3);
 
             var togglePanelItem = new Forms.ToolStripMenuItem("展开主面板");
+            togglePanelItem.Margin = trayMenuItemMargin;
             togglePanelItem.Click += (_, _) => Dispatcher.Invoke(() => ToggleMainPanel(edgeBarWindow));
             menu.Opening += (_, _) =>
             {
@@ -102,7 +104,12 @@ namespace ResourceRouter.App
             };
 
             menu.Items.Add(togglePanelItem);
-            menu.Items.Add("退出", null, (_, _) => Current.Shutdown());
+            var exitItem = new Forms.ToolStripMenuItem("退出")
+            {
+                Margin = trayMenuItemMargin
+            };
+            exitItem.Click += (_, _) => Current.Shutdown();
+            menu.Items.Add(exitItem);
 
             _notifyIcon.ContextMenuStrip = menu;
             _notifyIcon.DoubleClick += (_, _) =>

@@ -124,6 +124,21 @@ public sealed class DampedDragBehavior : IDisposable
         }
     }
 
+    public void SyncToWindowTop()
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        _targetTop = _window.Top;
+        _effectiveTargetTop = _window.Top;
+        _velocity = 0;
+        _lastDelta = 0;
+        _overrideStiffness = -1;
+        _overrideDamping = -1;
+    }
+
     public void Dispose()
     {
         CompositionTarget.Rendering -= OnRendering;

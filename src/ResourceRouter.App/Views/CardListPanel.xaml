@@ -100,7 +100,7 @@
                 <TextBox x:Name="SearchBox"
                          Style="{StaticResource SearchInputStyle}"
                          TextChanged="OnSearchBoxTextChanged"
-                         ToolTip="搜索资源（支持 #tag 或 tag:xxx）" />
+                         ToolTip="搜索资源（条件标签需通过下方标签芯片选择）" />
             </Border>
         </Grid>
 

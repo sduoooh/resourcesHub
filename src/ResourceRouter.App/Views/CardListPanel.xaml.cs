@@ -29,6 +29,7 @@ public partial class CardListPanel : UserControl
     private bool _isRefreshingConfigMode;
     private bool _hasVerticalScrollBar;
     private bool _isAnimatingCards;
+    private bool _suppressSearchInputChanged;
     private Func<Resource, IReadOnlyList<ProcessedRouteOption>>? _processedRouteResolver;
     private IResourceMetadataFacetPolicy _metadataFacetPolicy = new DefaultResourceMetadataFacetPolicy();
 
@@ -229,6 +230,39 @@ public partial class CardListPanel : UserControl
         DeactivateAllCards();
     }
 
+    public void ResetPanelState()
+    {
+        _searchDebounceTimer.Stop();
+        _pendingQuery = string.Empty;
+        _activeTags.Clear();
+        _matchedTags.Clear();
+
+        _suppressSearchInputChanged = true;
+        try
+        {
+            SearchBox.Text = string.Empty;
+        }
+        finally
+        {
+            _suppressSearchInputChanged = false;
+        }
+
+        TagChipsHost.Children.Clear();
+        TagChipsContainer.Visibility = Visibility.Collapsed;
+
+        var existingCards = _cards.ToArray();
+        foreach (var existing in existingCards)
+        {
+            existing.CloseInlineConfigEditor(commitChanges: true);
+            existing.DeactivateInteractions();
+        }
+
+        CardsHost.Children.Clear();
+        _cards.Clear();
+        _activeCard = null;
+        UpdateScrollbarAwareLayout(animate: false);
+    }
+
     private void OnRootPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         var source = e.OriginalSource as DependencyObject;
@@ -411,6 +445,11 @@ public partial class CardListPanel : UserControl
 
     private void OnSearchBoxTextChanged(object sender, TextChangedEventArgs e)
     {
+        if (_suppressSearchInputChanged)
+        {
+            return;
+        }
+
         _pendingQuery = SearchBox.Text;
         _searchDebounceTimer.Stop();
         _searchDebounceTimer.Start();
@@ -441,12 +480,7 @@ public partial class CardListPanel : UserControl
 
     private static string NormalizeTag(string? tag)
     {
-        if (string.IsNullOrWhiteSpace(tag))
-        {
-            return string.Empty;
-        }
-
-        return tag.Trim().TrimStart('#');
+        return ResourceTagRules.Normalize(tag) ?? string.Empty;
     }
 
     private static void ApplyTagVisual(ToggleButton chip, bool isActive, bool isMatched)

@@ -43,7 +43,9 @@ public interface IFormatConverterResolver
                 ConverterName = converter.Name,
                 SourceMatchLevel = RouteSourceMatchLevel.Any,
                 FormatMatchLevel = RouteFormatMatchLevel.Exact,
-                Rank = 1
+                Rank = 1,
+                IsExportable = true,
+                LockReason = null
             }
         };
     }

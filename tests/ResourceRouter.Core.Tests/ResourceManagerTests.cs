@@ -16,8 +16,7 @@ public class ResourceManagerTests
     public async Task ResourceManager_CanRunBasicLifecycle()
     {
         var store = new InMemoryResourceStore();
-        var index = new InMemorySearchIndex(store);
-        var manager = new ResourceManager(store, index);
+        var manager = new ResourceManager(store);
 
         var resource = new Resource
         {
@@ -40,6 +39,45 @@ public class ResourceManagerTests
         Assert.NotNull(restored);
         Assert.Equal(ResourceState.Ready, restored!.State);
         Assert.Single(list);
+    }
+
+    [Fact]
+    public async Task ResourceManager_RaisesLifecycleEvents_ForCreateUpdateDelete()
+    {
+        var store = new InMemoryResourceStore();
+        var manager = new ResourceManager(store);
+
+        var created = 0;
+        var updated = 0;
+        var deleted = 0;
+        Guid? deletedId = null;
+
+        manager.OnResourceCreated += (_, _) => created++;
+        manager.OnResourceUpdated += (_, _) => updated++;
+        manager.OnResourceDeleted += (_, args) =>
+        {
+            deleted++;
+            deletedId = args.ResourceId;
+        };
+
+        var resource = new Resource
+        {
+            Id = Guid.NewGuid(),
+            SourceUri = @"C:\temp\event.txt",
+            OriginalFileName = "event.txt",
+            MimeType = "text/plain",
+            State = ResourceState.Waiting
+        };
+
+        await manager.AddAsync(resource);
+        resource.State = ResourceState.Ready;
+        await manager.UpdateAsync(resource);
+        await manager.DeleteAsync(resource.Id);
+
+        Assert.Equal(1, created);
+        Assert.Equal(1, updated);
+        Assert.Equal(1, deleted);
+        Assert.Equal(resource.Id, deletedId);
     }
 
     private sealed class InMemoryResourceStore : IResourceStore
@@ -116,35 +154,4 @@ public class ResourceManagerTests
         }
     }
 
-    private sealed class InMemorySearchIndex : ISearchIndex
-    {
-        private readonly IResourceStore _store;
-
-        public InMemorySearchIndex(IResourceStore store)
-        {
-            _store = store;
-        }
-
-        public Task IndexAsync(Resource resource, CancellationToken cancellationToken = default)
-        {
-            return Task.CompletedTask;
-        }
-
-        public Task<IReadOnlyList<Resource>> QueryAsync(
-            string query,
-            int limit,
-            int offset,
-            IReadOnlyList<string>? tagFilters = null,
-            bool applyConditionVisibility = true,
-            CancellationToken cancellationToken = default)
-        {
-            return _store.SearchAsync(
-                query,
-                limit,
-                offset,
-                tagFilters,
-                applyConditionVisibility,
-                cancellationToken);
-        }
-    }
 }

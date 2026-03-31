@@ -29,4 +29,8 @@ public sealed class ProcessedRouteOption
     public RouteFormatMatchLevel FormatMatchLevel { get; init; }
 
     public int Rank { get; init; }
+
+    public bool IsExportable { get; init; } = true;
+
+    public string? LockReason { get; init; }
 }

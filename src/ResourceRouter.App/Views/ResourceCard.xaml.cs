@@ -151,10 +151,10 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
 
     public Visibility DetailVisibility => _isInlineConfigOpen ? Visibility.Collapsed : Visibility.Visible;
 
-    public bool IsProcessedRouteLocked => _processedRouteOptions.Count == 0;
+    public bool IsProcessedRouteLocked => !_processedRouteOptions.Any(static route => route.IsExportable);
 
     public string ProcessedRouteSummary => IsProcessedRouteLocked
-        ? "无可用路由（已锁定）"
+        ? BuildProcessedRouteLockReason()
         : "拖拽导出";
 
     public string StatusText
@@ -256,27 +256,41 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
     public void SetProcessedRouteOptions(IReadOnlyList<ProcessedRouteOption> routes)
     {
         _processedRouteOptions = routes ?? Array.Empty<ProcessedRouteOption>();
+        var exportableRoutes = _processedRouteOptions
+            .Where(static route => route.IsExportable)
+            .ToArray();
 
         if (Resource is not null)
         {
-            if (_processedRouteOptions.Count == 0)
+            if (exportableRoutes.Length == 0)
             {
                 Resource.ProcessedRouteId = null;
             }
             else if (string.IsNullOrWhiteSpace(Resource.ProcessedRouteId) ||
-                     !_processedRouteOptions.Any(route =>
+                     !exportableRoutes.Any(route =>
                          string.Equals(route.RouteId, Resource.ProcessedRouteId, StringComparison.OrdinalIgnoreCase)))
             {
-                Resource.ProcessedRouteId = _processedRouteOptions[0].RouteId;
+                Resource.ProcessedRouteId = exportableRoutes[0].RouteId;
             }
         }
 
-        InlineRouteCombo.ItemsSource = _processedRouteOptions;
+        InlineRouteCombo.ItemsSource = exportableRoutes;
         InlineRouteCombo.DisplayMemberPath = nameof(ProcessedRouteOption.DisplayName);
 
         SyncInlineConfigFromResource();
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsProcessedRouteLocked)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ProcessedRouteSummary)));
+    }
+
+    private string BuildProcessedRouteLockReason()
+    {
+        var reason = _processedRouteOptions
+            .Select(static route => route.LockReason)
+            .FirstOrDefault(static text => !string.IsNullOrWhiteSpace(text));
+
+        return string.IsNullOrWhiteSpace(reason)
+            ? "无可用路由（已锁定）"
+            : reason!;
     }
 
     public bool CloseInlineConfigEditor(bool commitChanges)
@@ -968,7 +982,7 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
             {
                 var defaultModelIndex = ModelOptions
                     .Select((option, index) => new { option.Value, index })
-                    .FirstOrDefault(pair => pair.Value == ModelType.LocalSmall)?.index ?? 0;
+                    .FirstOrDefault(pair => pair.Value == ModelType.None)?.index ?? 0;
                 InlineModelCombo.SelectedIndex = defaultModelIndex;
             }
 
@@ -1275,12 +1289,7 @@ public partial class ResourceCard : UserControl, INotifyPropertyChanged
 
     private static string NormalizeTagText(string? rawTag)
     {
-        if (string.IsNullOrWhiteSpace(rawTag))
-        {
-            return string.Empty;
-        }
-
-        return rawTag.Trim().TrimStart('#');
+        return ResourceTagRules.Normalize(rawTag) ?? string.Empty;
     }
 
     private bool TryCommitInlineConfig()

@@ -18,8 +18,7 @@ public class PipelineEngineConcurrencyTests
     {
         var storage = new FakeStorageProvider();
         var store = new InMemoryResourceStore();
-        var index = new InMemorySearchIndex(store);
-        var manager = new ResourceManager(store, index);
+        var manager = new ResourceManager(store);
         var converter = new SlowCountingConverter(delayMilliseconds: 10);
         var resolver = new FixedResolver(converter);
 
@@ -76,6 +75,108 @@ public class PipelineEngineConcurrencyTests
         Assert.True(
             converter.MaxObservedConcurrency <= 2,
             "Processing concurrency exceeded configured limit: " + converter.MaxObservedConcurrency);
+    }
+
+    [Fact]
+    public async Task IngestResourceAsync_UsesInjectedWaitingScheduler()
+    {
+        var storage = new FakeStorageProvider();
+        var store = new InMemoryResourceStore();
+        var manager = new ResourceManager(store);
+        var scheduler = new ImmediateWaitingScheduler();
+
+        var engine = new PipelineEngine(
+            storage,
+            manager,
+            new FixedResolver(new SlowCountingConverter(delayMilliseconds: 5)),
+            new EmptyAiProvider(),
+            new NoOpThumbnailProvider(),
+            new NoOpCloudSyncProvider(),
+            new ResourceRouter.Core.Services.NoOp.NoOpResourceHealthMonitor(),
+            new ResourceRouter.Core.Services.NoOp.NoOpResourceFeatureExtractor(),
+            new ResourceRouter.Core.Services.NoOp.NoOpResourceGovernanceProvider(),
+            new ResourceRouter.Core.Services.NoOp.NoOpProcessingConfigurationProvider(),
+            logger: null,
+            maxConcurrentProcessing: 1,
+            maxConcurrentSync: 1,
+            waitingScheduler: scheduler,
+            syncOrchestrator: new RecordingSyncOrchestrator());
+
+        await engine.IngestResourceAsync(
+            new RawDropData
+            {
+                Kind = RawDropKind.Text,
+                Text = "scheduler",
+                OriginalSuggestedName = "scheduler.txt"
+            },
+            new ResourceIngestOptions
+            {
+                Privacy = PrivacyLevel.Private,
+                SyncPolicy = SyncPolicy.LocalOnly,
+                ProcessingModel = ModelType.None,
+                Source = ResourceSource.Manual,
+                PermissionPresetId = PermissionPreset.PrivatePresetId
+            },
+            waitingDuration: TimeSpan.FromMilliseconds(1));
+
+        var completed = await WaitUntilAsync(async () =>
+        {
+            var resources = await manager.ListRecentAsync(10);
+            return resources.Count == 1 && resources[0].State == ResourceState.Ready;
+        }, timeout: TimeSpan.FromSeconds(5));
+
+        Assert.True(completed, "Pending resource did not transition to ready state within timeout.");
+        Assert.Equal(1, scheduler.ScheduledCount);
+    }
+
+    [Fact]
+    public async Task ExecutePipelineAsync_UsesInjectedSyncOrchestrator_ForCloudPolicy()
+    {
+        var storage = new FakeStorageProvider();
+        var store = new InMemoryResourceStore();
+        var manager = new ResourceManager(store);
+        var scheduler = new ImmediateWaitingScheduler();
+        var syncOrchestrator = new RecordingSyncOrchestrator();
+
+        var engine = new PipelineEngine(
+            storage,
+            manager,
+            new FixedResolver(new SlowCountingConverter(delayMilliseconds: 5)),
+            new EmptyAiProvider(),
+            new NoOpThumbnailProvider(),
+            new NoOpCloudSyncProvider(),
+            new ResourceRouter.Core.Services.NoOp.NoOpResourceHealthMonitor(),
+            new ResourceRouter.Core.Services.NoOp.NoOpResourceFeatureExtractor(),
+            new ResourceRouter.Core.Services.NoOp.NoOpResourceGovernanceProvider(),
+            new ResourceRouter.Core.Services.NoOp.NoOpProcessingConfigurationProvider(),
+            logger: null,
+            maxConcurrentProcessing: 1,
+            maxConcurrentSync: 1,
+            waitingScheduler: scheduler,
+            syncOrchestrator: syncOrchestrator);
+
+        await engine.IngestResourceAsync(
+            new RawDropData
+            {
+                Kind = RawDropKind.Text,
+                Text = "sync",
+                OriginalSuggestedName = "sync.txt"
+            },
+            new ResourceIngestOptions
+            {
+                Privacy = PrivacyLevel.Public,
+                SyncPolicy = SyncPolicy.CloudDefault,
+                ProcessingModel = ModelType.None,
+                Source = ResourceSource.Manual,
+                PermissionPresetId = PermissionPreset.PublicPresetId
+            },
+            waitingDuration: TimeSpan.FromMilliseconds(1));
+
+        var synced = await WaitUntilAsync(
+            () => Task.FromResult(syncOrchestrator.UploadQueuedCount > 0),
+            timeout: TimeSpan.FromSeconds(5));
+
+        Assert.True(synced, "Sync orchestrator was not invoked for cloud-default resource.");
     }
 
     private static async Task<bool> WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
@@ -191,35 +292,32 @@ public class PipelineEngineConcurrencyTests
         }
     }
 
-    private sealed class InMemorySearchIndex : ISearchIndex
+    private sealed class ImmediateWaitingScheduler : IWaitingScheduler
     {
-        private readonly IResourceStore _store;
+        private int _scheduledCount;
 
-        public InMemorySearchIndex(IResourceStore store)
+        public int ScheduledCount => _scheduledCount;
+
+        public void Schedule(
+            Guid resourceId,
+            TimeSpan delay,
+            CancellationToken cancellationToken,
+            Func<CancellationToken, Task> onElapsedAsync)
         {
-            _store = store;
+            Interlocked.Increment(ref _scheduledCount);
+            _ = Task.Run(async () => await onElapsedAsync(cancellationToken));
         }
+    }
 
-        public Task IndexAsync(Resource resource, CancellationToken cancellationToken = default)
-        {
-            return Task.CompletedTask;
-        }
+    private sealed class RecordingSyncOrchestrator : ISyncOrchestrator
+    {
+        private int _uploadQueuedCount;
 
-        public Task<IReadOnlyList<Resource>> QueryAsync(
-            string query,
-            int limit,
-            int offset,
-            IReadOnlyList<string>? tagFilters = null,
-            bool applyConditionVisibility = true,
-            CancellationToken cancellationToken = default)
+        public int UploadQueuedCount => _uploadQueuedCount;
+
+        public void EnqueueUpload(Resource resource, CancellationToken cancellationToken = default)
         {
-            return _store.SearchAsync(
-                query,
-                limit,
-                offset,
-                tagFilters,
-                applyConditionVisibility,
-                cancellationToken);
+            Interlocked.Increment(ref _uploadQueuedCount);
         }
     }
 
